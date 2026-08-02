@@ -827,13 +827,9 @@ confirm_and_transcode() {
             echo -e "$(printf "$MSG_PEAK_PAD" "$peak" "$pad")"
         fi
 
-        # 第 3 行：转码中（实际执行）
-        # v1.2.3: 显示实际使用嘅重采样器（swr or soxr）
-        if [[ "$USE_SOXR" == "1" ]]; then
-            echo -e "$MSG_TRANSCODING_SOXR"
-        else
-            echo -e "$MSG_TRANSCODING_SWR"
-        fi
+        # 第 3 行：转码中（占位符，实际 pipeline 信息喺第 4 行结果行显示）
+        # v1.4.0: 避免提前打印 swr/soxr（降级时可能唔准）；用最美观嘅动画符号
+        echo -e "$MSG_TRANSCODING"
 
         # 执行转码
         local in_size out_size
@@ -1027,8 +1023,7 @@ init_language() {
             MSG_CONFIRM="確認？${BOLD}(y 開始，q 取消，大小寫均可)${NC}: "
             MSG_PEAK_OK="       峰值 %s dBFS → 無需保護"
             MSG_PEAK_PAD="       峰值 %s dBFS → 應用 %s dB 保護"
-            MSG_TRANSCODING_SOXR="       轉碼中 (soxr → opus 510k)..."
-            MSG_TRANSCODING_SWR="       轉碼中 (swr → opus 510k)..."
+            MSG_TRANSCODING="       🎼 開始轉碼，請稍候..."
             MSG_COVER_OK="  封面 ✓"
             MSG_COVER_NO="  封面 ✗"
             MSG_COMPRESSED="  (壓縮 %s%%)"
@@ -1094,8 +1089,7 @@ init_language() {
             MSG_CONFIRM="Confirm? ${BOLD}(y start, q cancel, case-insensitive)${NC}: "
             MSG_PEAK_OK="       peak %s dBFS → no protection needed"
             MSG_PEAK_PAD="       peak %s dBFS → applying %s dB protection"
-            MSG_TRANSCODING_SOXR="       transcoding (soxr → opus 510k)..."
-            MSG_TRANSCODING_SWR="       transcoding (swr → opus 510k)..."
+            MSG_TRANSCODING="       🎼 transcoding, please wait..."
             MSG_COVER_OK="  cover ✓"
             MSG_COVER_NO="  cover ✗"
             MSG_COMPRESSED="  (%s%% smaller)"
