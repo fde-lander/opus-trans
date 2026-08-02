@@ -46,11 +46,11 @@ fi
 # ═══════════════════════════════════════════════
 echo "--- 测试组 1：版本 + 常量 ---"
 
-# T1.1: VERSION = 1.2.1
-if grep -q 'readonly VERSION="1.3.0"' "$SCRIPT_PATH"; then
-    ok "T1.1 VERSION = 1.2.1"
+# T1.1: VERSION = 1.4.0
+if grep -q 'readonly VERSION="1.4.0"' "$SCRIPT_PATH"; then
+    ok "T1.1 VERSION = 1.4.0"
 else
-    fail "T1.1 VERSION 不是 1.2.1"
+    fail "T1.1 VERSION 不是 1.4.0"
 fi
 
 # T1.2: BITRATE = 510k

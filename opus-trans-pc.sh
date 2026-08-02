@@ -7,7 +7,7 @@
 set -euo pipefail
 
 # ── 常量 ──
-readonly VERSION="1.3.0"
+readonly VERSION="1.4.0"
 readonly BITRATE="510k"
 readonly SOXR="aresample=48000:resampler=soxr:precision=28"
 readonly SWR="aresample=48000"
@@ -87,6 +87,7 @@ detect_resampler() {
 
 # ── 全局变量 ──
 TARGET_DIR=""
+ACTUAL_DEPTH=""   # v1.4.0: 全局变量，记录 transcode() 实际成功嘅位深（L1=$src_depth / L2=16 / L3=N/A / 失败=空）— confirm_and_transcode() 第 4 行读取
 declare -a FILE_PATHS=()      # 所有音乐文件完整路径
 declare -a FILE_GROUPS=()      # 每个文件对应的组字母
 declare -a FILE_NUMBERS=()     # 每个文件对应的编号
@@ -658,7 +659,9 @@ build_metadata_args() {
 transcode() {
     local input_file="$1"
     local output_file="$2"
-    local ACTUAL_DEPTH=""   # v1.4.0: 实际成功嘅位深（L1=$src_depth / L2=16 / L3=N/A / 失败=空）
+    # v1.4.0: 全局 ACTUAL_DEPTH（唔用 local — spec §6.2 原意系「函数开头 reset 避免污染」
+    #   但 local 变量唔会跨函数，confirm_and_transcode() 读唔到。改为全局 + 函数开头 reset）
+    ACTUAL_DEPTH=""
 
     # ── 1. 抽封面（若有）──
     local cover_path

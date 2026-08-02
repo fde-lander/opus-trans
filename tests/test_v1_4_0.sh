@@ -73,14 +73,15 @@ test_actual_depth_init() {
     # Extract transcode() function (until next ^} standalone line)
     local transcode_body
     transcode_body=$(awk '/^transcode\(\)/,/^}$/' opus-trans.sh)
-    # Check ACTUAL_DEPTH init position (must be within first 5 lines)
+    # Check ACTUAL_DEPTH init position (must be within first 10 lines — allow for
+    # blank lines + comments before the init statement)
     local init_line
-    init_line=$(echo "$transcode_body" | grep -n 'local ACTUAL_DEPTH=""' | head -1 | cut -d: -f1)
-    if [[ -n "$init_line" && "$init_line" -le 5 ]]; then
+    init_line=$(echo "$transcode_body" | grep -n 'ACTUAL_DEPTH=""' | head -1 | cut -d: -f1)
+    if [[ -n "$init_line" && "$init_line" -le 10 ]]; then
         echo "  ✅ test_actual_depth_init (line $init_line initialized)"
         ((PASS++)) || true
     else
-        echo "  ❌ test_actual_depth_init: ACTUAL_DEPTH not initialized within first 5 lines of transcode()"
+        echo "  ❌ test_actual_depth_init: ACTUAL_DEPTH not initialized within first 10 lines of transcode() (found at line $init_line)"
         ((FAIL++)) || true
     fi
 }

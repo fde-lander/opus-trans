@@ -94,11 +94,11 @@ fi
 # ── 测试组 5：版本号 ──
 echo "--- 测试组 5：版本号 ---"
 
-# T5.1: VERSION = 1.2.1（v1.2.1 hotfix：Termux soxr 自动降级 swr）
-if grep -q 'readonly VERSION="1.3.0"' "$SCRIPT_PATH"; then
-    ok "T5.1 VERSION = 1.2.1"
+# T5.1: VERSION = 1.4.0（v1.4.0: PC 端口 + 进度显示强化）
+if grep -q 'readonly VERSION="1.4.0"' "$SCRIPT_PATH"; then
+    ok "T5.1 VERSION = 1.4.0"
 else
-    fail "T5.1 VERSION 不是 1.2.1"
+    fail "T5.1 VERSION 不是 1.4.0"
 fi
 
 # ── 测试组 6：功能逻辑不变（回归保护）──
