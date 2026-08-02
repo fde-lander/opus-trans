@@ -8,40 +8,40 @@
 set -euo pipefail
 
 # ── 常量 ──
-readonly VERSION="1.2.2"
+readonly VERSION="1.2.3"
 readonly BITRATE="510k"
 readonly SOXR="aresample=48000:resampler=soxr:precision=28"
 readonly SWR="aresample=48000"
 readonly SUPPORTED_EXT="flac wav ape wv mp3 m4a aac ogg wma aiff"
 # 注意：.opus 也在扫描范围内（可从 opus 转其他格式，但实际场景极少）
 
-# ── 重采样器自动探测（v1.2.1）──
+# ── 重采样器自动探测（v1.2.2）──
 # ⚠️ Termux ffmpeg 8.1.2 嘅 libsoxr 有 bug（Android NEON 编译），一用就 segfault！
 #   实测：soxr+s24le / soxr+s16le 都 crash，swr 全部正常（主人手机已验证）
-#   方案：启动时自动探测 soxr 可用性，唔得就全 session 用 swr（唔会每首都试错）
-#   强制开关：OPUS_TRANS_FORCE_SWR=1 直接跳过探测用 swr（Termux 用户推荐）
-USE_SOXR=1   # 1=用 soxr, 0=用 swr
-RESAMPLER="$SOXR"
+#   方案：默认强制 swr（主人主要喺 Termux 用，写死 =1 唔使设环境变量）
+#   如需改返 soxr：export OPUS_TRANS_FORCE_SWR=0 或改下面默认值
+USE_SOXR=0   # 1=用 soxr, 0=用 swr
+RESAMPLER="$SWR"
 
 detect_resampler() {
     local test_file="$1"
 
-    # 强制 swr 开关（Termux 已知 soxr bug，主人可以直接设环境变量）
-    if [[ "${OPUS_TRANS_FORCE_SWR:-0}" == "1" ]]; then
+    # 强制开关（默认 1 = 强制 swr，Termux 用户直接可用）
+    # 主人要改返 soxr 时：export OPUS_TRANS_FORCE_SWR=0 再运行
+    if [[ "${OPUS_TRANS_FORCE_SWR:-1}" == "1" ]]; then
         USE_SOXR=0
         RESAMPLER="$SWR"
-        echo -e "${YELLOW}⚠️ OPUS_TRANS_FORCE_SWR=1，已直接用 swr 重采样${NC}"
         return
     fi
 
+    # 非强制模式：自动探测 soxr 可用性（VPS 等 soxr 正常环境）
     local tmp_base="${TMPDIR:-/tmp}"
     [[ ! -d "$tmp_base" ]] && tmp_base="$HOME"
     local test_out="$tmp_base/.opus-trans-soxr-test.$$.wav"
 
     # 用目标文件跑 0.3 秒 soxr 测试
-    # ⚠️ v1.2.1 fix: 之前靠「输出文件有数据」判断，但 segfault 前可能已输出 >100KB
-    #    → 误判 soxr 可用！改为检测 ffmpeg 退出码（segfault = 139）
-    # ⚠️ set -e 下非零退出会终止脚本，必须用 if 包裹（唔可以直接 $?）
+    # ⚠️ 靠「输出文件有数据」判断会误判（segfault 前可能已输出 >100KB）
+    #   改为检测 ffmpeg 退出码（segfault = 139）+ if 包裹避免 set -e 终止
     rm -f "$test_out" 2>/dev/null || true
     if ffmpeg -v error -i "$test_file" -t 0.3 \
         -af "$SOXR" -c:a pcm_s16le -f wav - 2>/dev/null > "$test_out"; then
@@ -49,7 +49,6 @@ detect_resampler() {
             USE_SOXR=1
             RESAMPLER="$SOXR"
         else
-            # 退出码 0 但无输出 → 都系唔可用
             USE_SOXR=0
             RESAMPLER="$SWR"
             echo -e "${YELLOW}⚠️ 检测到 soxr 无输出（可能 ffmpeg bug），已自动改用 swr 重采样${NC}"
