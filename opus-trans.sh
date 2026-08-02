@@ -776,7 +776,12 @@ confirm_and_transcode() {
         fi
 
         # 第 3 行：转码中（实际执行）
-        echo -e "       转码中 (soxr → opus 510k)..."
+        # v1.2.3: 显示实际使用嘅重采样器（swr or soxr）
+        if [[ "$USE_SOXR" == "1" ]]; then
+            echo -e "       转码中 (soxr → opus 510k)..."
+        else
+            echo -e "       转码中 (swr → opus 510k)..."
+        fi
 
         # 执行转码
         local in_size out_size
