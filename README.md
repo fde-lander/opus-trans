@@ -5,7 +5,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform: Termux / Linux](https://img.shields.io/badge/Platform-Termux%20%2F%20Linux-blue.svg)]()
-[![Version: v1.3.0](https://img.shields.io/badge/Version-v1.3.0-green.svg)]()
+[![Version: v1.4.0](https://img.shields.io/badge/Version-v1.4.0-green.svg)]()
 [![Shell: Bash](https://img.shields.io/badge/Shell-Bash-4EAA25.svg)]()
 
 A single-file Bash script that batch-transcodes **Hi-Res FLAC / WAV** (and other lossless/lossy formats) into high-quality **Opus 510kbps VBR** files — perfect for music bought from **mora** (Hi-Res FLAC 24bit/48-96kHz, 80-150MB per track) that you want as portable, phone-friendly copies (~15MB per track, **maximum audible quality**).
@@ -27,6 +27,9 @@ Designed and tested on **Termux (Android)**, also works on **Debian / other Linu
 - 🔤 **Flexible selection syntax** — `A1` / `B1-B3` / `B` / `A1,C2` / `all` (case-insensitive)
 - 📊 **Smart file size display** (B/KB/MB/GB) + compression ratio + cover-art marker
 - 📈 **Progress display** — fixed 4 lines per track, zero refresh (Termux-stable)
+- 🖥️ **Dual-port**: Termux (default swr) + PC Debian (default soxr) — pick your binary
+- 🎯 **Pipeline transparency (v1.4.0)** — line 4 result row shows actual `swr/soxr · bitdepth → opus 510k` so you know exactly what ran
+- ⚠️ **Downgrade warning (v1.4.0)** — `⚠️` appears on line 4 when source 24/32-bit fell back to 16-bit (L2)
 
 ---
 
@@ -54,7 +57,7 @@ Termux does NOT include `~/.local/bin` in PATH by default. Add it:
 **Step 4 — Verify**
 
     opus-trans --version
-    # 🎵 opus-trans v1.3.0 — Hi-Res FLAC → Opus 510k VBR
+    # 🎵 opus-trans v1.4.0 — Hi-Res FLAC → Opus 510k VBR
 
 > **Getting the script onto your phone**: use `scp` (after `pkg install openssh` + `sshd`), or copy via Termux's `~/storage/shared/` (Android shared storage), or download directly from the [Releases page](https://github.com/fde-lander/opus-trans/releases).
 
@@ -85,12 +88,26 @@ Termux does NOT include `~/.local/bin` in PATH by default. Add it:
     opus-trans --version
     opus-trans --help
 
-### 🌏 Language selection (v1.3.0)
+### 🌏 Language selection (v1.3.0+)
 
 The script asks for your language on first run. You can also preselect it:
 
     OPUS_TRANS_LANG=en opus-trans     # English
     OPUS_TRANS_LANG=zh opus-trans     # 繁體中文
+
+### 🖥️ PC Debian install (v1.4.0+)
+
+The PC build uses `#!/bin/bash` (not Termux path) and defaults to soxr. Same
+script body, just two lines different from the Termux version:
+
+    # Copy opus-trans-pc.sh to your PC
+    chmod +x opus-trans-pc.sh
+
+    # Run
+    ./opus-trans-pc.sh /path/to/music
+
+    # Force swr (if soxr has issues on your distro)
+    OPUS_TRANS_FORCE_SWR=1 ./opus-trans-pc.sh /path/to/music
 
 ### Selection syntax (case-insensitive)
 
@@ -213,6 +230,18 @@ A: Just remove the script:
 ---
 
 ## 📜 Changelog
+
+### v1.4.0 (2026-08-02) — Dual-port + Pipeline transparency 🎯
+- **PC Debian port** — new `opus-trans-pc.sh` (separate shebang + soxr default)
+  - Two files are 99% identical (only 2 lines differ: shebang + `OPUS_TRANS_FORCE_SWR` default)
+  - PC version auto-detects soxr on startup; user can force swr via `OPUS_TRANS_FORCE_SWR=1`
+- **Pipeline transparency** — line 4 result row now shows actual resampler + actual bit depth
+  - Example: `swr · 24bit → opus 510k  42MB → 15MB (64%) cover ✓`
+- **Downgrade warning** — `⚠️` appears when source 24/32-bit fell back to 16-bit (L2 fallback)
+- **Line 3 simplification** — replaced conditional `soxr/swr` text with friendly `🎼 transcoding, please wait...` placeholder (line 4 reports truth after the fact)
+- **ACTUAL_DEPTH tracking** — new global variable in `transcode()` records actual success path (L1=$src_depth / L2=16 / L3=N/A)
+- **10 new tests** — `tests/test_v1_4_0.sh` covers PC file, dual-file sync, downgrade logic, i18n
+- **Regression** — all v1.1.0 (15) + v1.2.0 (21) tests still pass
 
 ### v1.3.0 (2026-08-02) — Bilingual release 🌏
 - **Language selection at startup** — English / 繁體中文 (interactive or via `OPUS_TRANS_LANG=en|zh`)
