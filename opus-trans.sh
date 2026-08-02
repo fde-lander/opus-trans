@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # ── 常量 ──
-readonly VERSION="1.0.4"
+readonly VERSION="2.0.0"
 readonly BITRATE="320k"
 readonly SUPPORTED_EXT="flac wav ape wv mp3 m4a aac ogg wma aiff"
 # 注意：.opus 也在扫描范围内（可从 opus 转其他格式，但实际场景极少）
@@ -185,17 +185,40 @@ file_size_human() {
     fi
 }
 
-display_list() {
+# ── Phase 2b: 分页浏览系统 ──
+
+# 全局：显示行数据
+declare -a DISPLAY_LINES=()
+DISPLAY_LINE_COUNT=0
+
+# 获取终端行数，fallback 15
+get_terminal_lines() {
+    local lines
+    lines=$(tput lines 2>/dev/null) || lines=""
+    if [[ -z "$lines" || "$lines" -lt 10 ]]; then
+        echo 15
+    else
+        echo "$lines"
+    fi
+}
+
+# 构建 display lines（替代旧 display_list 的 echo 逻辑）
+# DISPLAY_LINES 每行包含：类型|内容
+# 类型：header=标题, group=组标题, file=文件行
+build_display_lines() {
+    DISPLAY_LINES=()
+    DISPLAY_LINE_COUNT=0
+
     if [[ $TOTAL_FILES -eq 0 ]]; then
-        echo -e "${YELLOW}📭 目录里没有找到任何音乐文件${NC}"
-        echo ""
-        echo "支持的格式："
-        echo "  flac  wav  ape  wv  mp3  m4a  aac  ogg  wma  aiff"
-        exit 0
+        DISPLAY_LINES+=("empty|没有音乐文件")
+        DISPLAY_LINE_COUNT=1
+        return
     fi
 
-    echo -e "${CYAN}🎵 找到 ${TOTAL_FILES} 个音乐文件：${NC}"
-    echo ""
+    DISPLAY_LINES+=("header|🎵 找到 ${TOTAL_FILES} 个音乐文件：")
+    DISPLAY_LINE_COUNT=1
+    DISPLAY_LINES+=("blank|")
+    DISPLAY_LINE_COUNT=2
 
     local prev_group=""
     for i in "${!FILE_PATHS[@]}"; do
@@ -207,7 +230,8 @@ display_list() {
 
         # 组标题
         if [[ "$grp" != "$prev_group" ]]; then
-            echo -e "${BOLD}${grp} ${GROUP_DIRNAMES[$grp]} (${GROUP_FILECOUNT[$grp]})${NC}"
+            DISPLAY_LINES+=("group|${grp}|${GROUP_DIRNAMES[$grp]}|${GROUP_FILECOUNT[$grp]}|${grp}")
+            DISPLAY_LINE_COUNT=$((DISPLAY_LINE_COUNT + 1))
             prev_group="$grp"
         fi
 
@@ -216,17 +240,275 @@ display_list() {
         local opus_file="${base}.opus"
         local exists_marker=""
         if [[ -f "$opus_file" ]]; then
-            exists_marker=" ${YELLOW}⚠️ 已存在${NC}"
+            exists_marker=" ⚠️"
         fi
 
         # 文件大小
         local size
         size=$(stat -c%s "$fpath" 2>/dev/null || stat -f%z "$fpath" 2>/dev/null || echo 0)
 
-        echo -e "  ${grp}${num}. ${fname}  ${CYAN}$(file_size_human "$size")${NC}${exists_marker}"
+        DISPLAY_LINES+=("file|${grp}${num}|${fname}|$(file_size_human "$size")${exists_marker}")
+        DISPLAY_LINE_COUNT=$((DISPLAY_LINE_COUNT + 1))
+    done
+}
+
+# 渲染指定范围的行
+# 参数：$1=start_index, $2=end_index (inclusive), $3=total_pages, $4=current_page, $5=input_buffer
+render_page() {
+    local start=$1
+    local end=$2
+    local total_pages=$3
+    local current_page=$4
+    local input_buf=$5
+
+    local term_lines
+    term_lines=$(get_terminal_lines)
+
+    # 清屏
+    printf '\033[2J\033[H'
+
+    # 渲染行
+    local i=$start
+    local prev_group=""
+    while [[ $i -le $end && $i -lt $DISPLAY_LINE_COUNT ]]; do
+        local line="${DISPLAY_LINES[$i]}"
+        IFS='|' read -r type rest <<< "$line"
+        case "$type" in
+            header)
+                echo -e "${CYAN}${rest}${NC}"
+                ;;
+            blank)
+                echo ""
+                ;;
+            group)
+                # 格式: group|grp_letter|dirname|count|extra
+                IFS='|' read -r _ grp_letter dirname count _rest <<< "$line"
+                # 检查是否需要（续）标记
+                local show_cont=false
+                if [[ $i -gt 0 && $i -ne $start ]]; then
+                    local prev_line="${DISPLAY_LINES[$((i-1))]}"
+                    local prev_type
+                    prev_type="${prev_line%%|*}"
+                    if [[ "$prev_type" == "file" ]]; then
+                        local prev_code
+                        prev_code=$(echo "$prev_line" | cut -d'|' -f2)
+                        local prev_grp="${prev_code//[0-9]/}"
+                        if [[ "$prev_grp" == "$grp_letter" ]]; then
+                            show_cont=true
+                        fi
+                    fi
+                fi
+                if $show_cont; then
+                    echo -e "${BOLD}${grp_letter} ${dirname} (${count})（续）${NC}"
+                else
+                    echo -e "${BOLD}${grp_letter} ${dirname} (${count})${NC}"
+                fi
+                ;;
+            file)
+                IFS='|' read -r _ code fname size_marker <<< "$line"
+                # 去除 exists marker 单独处理颜色
+                local exists=""
+                if [[ "$size_marker" == *"⚠️"* ]]; then
+                    exists=" ${YELLOW}⚠️ 已存在${NC}"
+                    size_marker="${size_marker%% ⚠️}"
+                fi
+                echo -e "  ${code}. ${fname}  ${CYAN}${size_marker}${NC}${exists}"
+                ;;
+        esac
+        i=$((i + 1))
     done
 
+    # 状态栏
     echo ""
+    if [[ $total_pages -gt 1 ]]; then
+        echo -e "${BOLD}━━ 第 ${current_page}/${total_pages} 页 ━━${NC} PgUp/PgDn/↑/↓ 翻页 | ESC=取消"
+    else
+        echo -e "${BOLD}━━ 全部 ${TOTAL_FILES} 个文件 ━━${NC} ESC=取消"
+    fi
+
+    # 输入栏
+    echo ""
+    echo -ne "选择: ${input_buf}"
+}
+
+# 计算总页数
+calc_total_pages() {
+    local page_lines=$1
+    # 减去固定行：状态栏(1) + 空行(1) + 输入栏(1) = 3行
+    # header(1) + blank(1) = 2行（只在内容里）
+    local content_lines=$((page_lines - 3))
+    if [[ $content_lines -lt 1 ]]; then
+        content_lines=1
+    fi
+    local total_content=$((DISPLAY_LINE_COUNT - 2))  # 减去 header + blank
+    if [[ $total_content -le 0 ]]; then
+        total_content=1
+    fi
+    echo $(( (total_content + content_lines - 1) / content_lines ))
+}
+
+# 主分页选择循环
+paginate_and_select() {
+    local -n _sel_indices=$1
+    _sel_indices=()
+
+    # 空目录特殊处理
+    if [[ $TOTAL_FILES -eq 0 ]]; then
+        echo -e "${YELLOW}📭 目录里没有找到任何音乐文件${NC}"
+        echo ""
+        echo "支持的格式："
+        echo "  flac  wav  ape  wv  mp3  m4a  aac  ogg  wma  aiff"
+        exit 0
+    fi
+
+    # 构建 display lines
+    build_display_lines
+
+    local term_lines
+    term_lines=$(get_terminal_lines)
+
+    # 每页可用内容行数 = 终端行数 - 3（状态栏+空行+输入栏）
+    local page_lines=$((term_lines - 3))
+
+    # 总内容行（减去 header + blank）
+    local total_content=$((DISPLAY_LINE_COUNT - 2))
+
+    # 总页数
+    local total_pages
+    if [[ $total_content -le $page_lines ]]; then
+        total_pages=1
+    else
+        total_pages=$(( (total_content + page_lines - 1) / page_lines ))
+    fi
+
+    local current_page=1
+    local input_buf=""
+
+    # 进入 raw mode
+    stty raw -echo 2>/dev/null || true
+    trap 'stty sane 2>/dev/null' EXIT
+
+    while true; do
+        # 计算当前页的起始和结束 index
+        local start_idx
+        if [[ $current_page -eq 1 ]]; then
+            start_idx=0
+        else
+            # 第2页开始跳过 header+blank
+            start_idx=$((2 + (current_page - 1) * page_lines))
+        fi
+        local end_idx=$((start_idx + page_lines - 1))
+        [[ $end_idx -ge $DISPLAY_LINE_COUNT ]] && end_idx=$((DISPLAY_LINE_COUNT - 1))
+
+        # 渲染当前页
+        render_page "$start_idx" "$end_idx" "$total_pages" "$current_page" "$input_buf"
+
+        # 读取按键
+        local byte1
+        byte1=$(dd bs=1 count=1 2>/dev/null | od -An -tu1 | tr -d ' ')
+        byte1="${byte1:-0}"
+
+        # 处理按键
+        if [[ $byte1 -eq 27 ]]; then
+            # ESC sequence - 尝试读取后续 byte
+            local byte2
+            byte2=$(dd bs=1 count=1 2>/dev/null | od -An -tu1 | tr -d ' ')
+            byte2="${byte2:-0}"
+
+            if [[ $byte2 -eq 0 ]]; then
+                # 单个 ESC（超时无后续）-> 取消
+                stty sane 2>/dev/null
+                echo ""
+                echo -e "${YELLOW}已取消${NC}"
+                exit 0
+            elif [[ $byte2 -eq 91 ]]; then
+                # [ 开头的 escape sequence
+                local byte3
+                byte3=$(dd bs=1 count=1 2>/dev/null | od -An -tu1 | tr -d ' ')
+                byte3="${byte3:-0}"
+
+                if [[ $byte3 -eq 53 ]]; then
+                    # PgUp: ESC[5~ - 还需要读 ~
+                    dd bs=1 count=1 2>/dev/null > /dev/null
+                    if [[ $current_page -gt 1 ]]; then
+                        current_page=$((current_page - 1))
+                    fi
+                elif [[ $byte3 -eq 54 ]]; then
+                    # PgDn: ESC[6~ - 还需要读 ~
+                    dd bs=1 count=1 2>/dev/null > /dev/null
+                    if [[ $current_page -lt $total_pages ]]; then
+                        current_page=$((current_page + 1))
+                    fi
+                elif [[ $byte3 -eq 65 ]]; then
+                    # ↑ - 上翻半页
+                    if [[ $current_page -gt 1 ]]; then
+                        current_page=$((current_page - 1))
+                    fi
+                elif [[ $byte3 -eq 66 ]]; then
+                    # ↓ - 下翻半页
+                    if [[ $current_page -lt $total_pages ]]; then
+                        current_page=$((current_page + 1))
+                    fi
+                fi
+                # 其他 ESC sequence 忽略
+            else
+                # ESC + 非 [ 字符，忽略
+                :
+            fi
+
+        elif [[ $byte1 -eq 13 || $byte1 -eq 10 ]]; then
+            # Enter - 提交
+            stty sane 2>/dev/null
+            echo ""
+            break
+
+        elif [[ $byte1 -eq 127 || $byte1 -eq 8 ]]; then
+            # Backspace
+            if [[ ${#input_buf} -gt 0 ]]; then
+                input_buf="${input_buf%?}"
+            fi
+
+        elif [[ $byte1 -ge 32 && $byte1 -le 126 ]]; then
+            # 可打印 ASCII
+            local char
+            char=$(printf "\\$(printf '%03o' "$byte1")")
+
+            # q 键特殊处理
+            if [[ "$char" == "q" || "$char" == "Q" ]]; then
+                if [[ -z "$input_buf" ]]; then
+                    # 空缓冲区 -> 取消
+                    stty sane 2>/dev/null
+                    echo ""
+                    echo -e "${YELLOW}已取消${NC}"
+                    exit 0
+                fi
+            fi
+
+            input_buf="${input_buf}${char}"
+
+        elif [[ $byte1 -eq 3 ]]; then
+            # Ctrl+C
+            stty sane 2>/dev/null
+            echo ""
+            exit 1
+        fi
+    done
+
+    # 恢复终端
+    stty sane 2>/dev/null
+
+    # 解析选择
+    if [[ -z "$input_buf" ]]; then
+        # 空输入 = all
+        for i in "${!FILE_PATHS[@]}"; do
+            _sel_indices+=("$i")
+        done
+        return
+    fi
+
+    if ! parse_selection "$input_buf" _sel_indices; then
+        exit 1
+    fi
 }
 
 # ── Phase 3: 选择解析器 ──
@@ -396,15 +678,144 @@ generate_output_name() {
     echo "$output"
 }
 
-transcode() {
+# ── Phase 4b: 实时进度转码 ──
+
+# 获取音频时长（秒），失败返回空
+get_duration() {
+    local fpath="$1"
+    local dur
+    dur=$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$fpath" 2>/dev/null) || dur=""
+    if [[ -z "$dur" || "$dur" == "N/A" ]]; then
+        echo ""
+    else
+        echo "$dur"
+    fi
+}
+
+# 秒数转 mm:ss
+format_time() {
+    local total_sec=$1
+    local min=$((total_sec / 60))
+    local sec=$((total_sec % 60))
+    printf "%02d:%02d" "$min" "$sec"
+}
+
+# 绘制进度条（20格）
+draw_progress_bar() {
+    local percent=$1
+    local filled=$((percent * 20 / 100))
+    [[ $filled -gt 20 ]] && filled=20
+    [[ $filled -lt 0 ]] && filled=0
+    local empty=$((20 - filled))
+    local bar=""
+    local i
+    for ((i=0; i<filled; i++)); do bar+="█"; done
+    for ((i=0; i<empty; i++)); do bar+="░"; done
+    echo "$bar"
+}
+
+# 带进度条的转码函数
+# 参数：$1=input, $2=output, $3=duration_seconds, $4=current/total
+# 返回：0=成功, 1=失败
+transcode_with_progress() {
     local input_file="$1"
     local output_file="$2"
+    local duration="$3"
+    local current="$4"
+    local total="$5"
+    local relpath="${input_file#$TARGET_DIR/}"
 
+    local has_progress=false
+    if [[ -n "$duration" ]]; then
+        has_progress=true
+    fi
+
+    # 创建临时文件接收 progress 输出
+    local progress_file
+    progress_file=$(mktemp)
+
+    # 后台运行 ffmpeg
     ffmpeg -i "$input_file" \
         -c:a libopus -b:a "$BITRATE" -vbr on \
         -map_metadata 0 \
+        -progress "$progress_file" \
         -loglevel error \
-        "$output_file" 2>&1
+        "$output_file" 2>/dev/null &
+    local ffmpeg_pid=$!
+
+    # spinner 字符
+    local spinner_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+    local spinner_idx=0
+
+    # 监控进度
+    while kill -0 "$ffmpeg_pid" 2>/dev/null; do
+        if $has_progress; then
+            # 读取 progress 文件最后的 out_time_us
+            local out_time_us=""
+            if [[ -f "$progress_file" ]]; then
+                out_time_us=$(grep "out_time_us=" "$progress_file" 2>/dev/null | tail -1 | cut -d'=' -f2)
+            fi
+            local speed=""
+            if [[ -f "$progress_file" ]]; then
+                speed=$(grep "speed=" "$progress_file" 2>/dev/null | tail -1 | cut -d'=' -f2 | tr -d ' ')
+            fi
+            local total_size=""
+            if [[ -f "$progress_file" ]]; then
+                total_size=$(grep "total_size=" "$progress_file" 2>/dev/null | tail -1 | cut -d'=' -f2)
+            fi
+
+            if [[ -n "$out_time_us" && "$out_time_us" != "0" ]]; then
+                local processed_sec=$((out_time_us / 1000000))
+                local percent=$((processed_sec * 100 / ${duration%.*}))
+                [[ $percent -gt 100 ]] && percent=100
+                [[ $percent -lt 0 ]] && percent=0
+                local bar
+                bar=$(draw_progress_bar "$percent")
+                local time_str
+                time_str="$(format_time "$processed_sec")/$(format_time "${duration%.*}")"
+
+                # bitrate 计算
+                local bitrate_str=""
+                if [[ -n "$total_size" && "$total_size" != "N/A" && "$processed_sec" -gt 0 ]]; then
+                    local kbps=$((total_size * 8 / 1000 / processed_sec))
+                    bitrate_str=" | ${kbps}kb/s"
+                fi
+
+                printf "\r[${current}/${total}] %s | %s %d%% | %s | %s%s    " \
+                    "$relpath" "$bar" "$percent" "$time_str" "${speed:-?}" "$bitrate_str"
+            else
+                printf "\r[${current}/${total}] %s %s 转码中...    " \
+                    "$relpath" "${spinner_chars[$spinner_idx]}"
+            fi
+        else
+            # spinner 模式
+            printf "\r[${current}/${total}] %s %s 转码中...    " \
+                "$relpath" "${spinner_chars[$spinner_idx]}"
+        fi
+
+        spinner_idx=$(( (spinner_idx + 1) % 10 ))
+        sleep 0.2
+    done
+
+    # 等待 ffmpeg 结束
+    wait "$ffmpeg_pid"
+    local exit_code=$?
+
+    rm -f "$progress_file"
+
+    # 验证输出
+    if [[ $exit_code -eq 0 && -f "$output_file" ]]; then
+        local out_size
+        out_size=$(stat -c%s "$output_file" 2>/dev/null || stat -f%z "$output_file" 2>/dev/null || echo 0)
+        if [[ $out_size -gt 0 ]]; then
+            printf "\r[${current}/${total}] ✅ %s -> %s                              \n" \
+                "$relpath" "$(file_size_human "$out_size")"
+            return 0
+        fi
+    fi
+
+    printf "\r[${current}/${total}] ❌ %s 转码失败                              \n" "$relpath"
+    return 1
 }
 
 # ── Phase 5: 交互流程 + 汇总报告 ──
@@ -431,7 +842,7 @@ confirm_and_transcode() {
         if [[ -f "${base}.opus" ]]; then
             local new_name
             new_name=$(basename "$(generate_output_name "$fpath")")
-            exists_marker=" ${YELLOW}→ ${new_name}${NC}"
+            exists_marker=" ${YELLOW}-> ${new_name}${NC}"
         fi
 
         echo "  ${grp}${num}. ${fname}${exists_marker}"
@@ -447,6 +858,9 @@ confirm_and_transcode() {
 
     echo ""
     local current=0
+    local start_time
+    start_time=$(date +%s)
+
     for idx in "${_indices[@]}"; do
         ((current++)) || true
         local fpath="${FILE_PATHS[$idx]}"
@@ -454,7 +868,6 @@ confirm_and_transcode() {
         local num="${FILE_NUMBERS[$idx]}"
         local fname
         fname=$(basename "$fpath")
-        local relpath="${fpath#$TARGET_DIR/}"
 
         # 生成输出文件名
         local output_file
@@ -462,39 +875,28 @@ confirm_and_transcode() {
 
         # 检查是否需要新名称
         local base="${fpath%.*}"
-        local name_note=""
         if [[ "$output_file" != "${base}.opus" ]]; then
-            local new_name
-            new_name=$(basename "$output_file")
-            name_note=" -> ${CYAN}${new_name}${NC}"
             ((already_exists++)) || true
         fi
 
-        echo -ne "[${current}/${total}] ${relpath}... "
+        # 获取时长
+        local duration
+        duration=$(get_duration "$fpath")
 
-        # 执行转码
-        if transcode "$fpath" "$output_file"; then
-            # 验证输出
-            if [[ -f "$output_file" ]] && [[ $(stat -c%s "$output_file" 2>/dev/null || stat -f%z "$output_file" 2>/dev/null || echo 0) -gt 0 ]]; then
-                local out_size
-                out_size=$(stat -c%s "$output_file" 2>/dev/null || stat -f%z "$output_file" 2>/dev/null || echo 0)
-                echo -e "${GREEN}✅${NC} ${CYAN}$(file_size_human "$out_size")${NC}"
-                if [[ -z "$name_note" ]]; then
-                    ((success++)) || true
-                else
-                    echo "       ${CYAN}→ ${new_name}${NC}"
-                fi
-            else
-                echo -e "${RED}❌ 输出验证失败${NC}"
-                ((failed++)) || true
-                failed_files+=("$fpath")
-            fi
+        # 执行转码（带进度）
+        if transcode_with_progress "$fpath" "$output_file" "$duration" "$current" "$total"; then
+            ((success++)) || true
         else
-            echo -e "${RED}❌ 转码失败${NC}"
             ((failed++)) || true
             failed_files+=("$fpath")
         fi
     done
+
+    local end_time
+    end_time=$(date +%s)
+    local elapsed=$((end_time - start_time))
+    local elapsed_min=$((elapsed / 60))
+    local elapsed_sec=$((elapsed % 60))
 
     echo ""
     echo "━━━ 完成 ━━━"
@@ -502,6 +904,7 @@ confirm_and_transcode() {
     echo -e "  ${GREEN}✅ 成功：${success}${NC}"
     [[ $already_exists -gt 0 ]] && echo -e "  ${YELLOW}🔁 已存在（自动命名）：${already_exists}${NC}"
     [[ $failed -gt 0 ]] && echo -e "  ${RED}❌ 失败：${failed}${NC}"
+    echo -e "  ⏱️ 总耗时：${elapsed_min}分${elapsed_sec}秒"
     echo ""
 
     if [[ ${#failed_files[@]} -gt 0 ]]; then
@@ -545,18 +948,9 @@ main() {
     # 扫描目录
     scan_directory "$TARGET_DIR"
 
-    # 显示文件列表
-    display_list
-
-    # 用户选择
-    echo -ne "请选择${BOLD}(大小写均可: a1 / b1-b3 / b / a1,c2 / all / q)${NC}: "
-    read -r user_selection
-
-    # 解析选择
+    # 分页浏览 + 用户选择
     declare -a selected_indices=()
-    if ! parse_selection "$user_selection" selected_indices; then
-        exit 1
-    fi
+    paginate_and_select selected_indices
 
     if [[ ${#selected_indices[@]} -eq 0 ]]; then
         echo -e "${YELLOW}未选择任何文件${NC}"
