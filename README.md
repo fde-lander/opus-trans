@@ -1,6 +1,6 @@
 # opus-trans 🐰
 
-Termux Opus 转码器 — 将 Hi-Res FLAC 批量转码为 Opus 510kbps VBR（音质升级版 v1.2.0）
+Termux Opus 转码器 — 将 Hi-Res FLAC 批量转码为 Opus 510kbps VBR（音质升级版 v1.2.1）
 
 适合将 mora 购买嘅 Hi-Res FLAC（24bit/48-96kHz，每首 80-150MB）转码为便携嘅 Opus 文件（每首约 17MB，**最大听感**）。
 
@@ -11,7 +11,7 @@ Termux Opus 转码器 — 将 Hi-Res FLAC 批量转码为 Opus 510kbps VBR（音
 - 🎯 递归扫描子目录（按目录分组 A B C ...，q 留俾取消命令）
 - 🎵 Opus 510kbps VBR（Opus 立体声硬顶）— 实测 480.9kbps，vs v1.1.0 实际只有 262-298kbps
 - 🎚️ 自适应削波保护 — 源峰值 > -1.5dBFS 自动衰减到 -1.5dBFS（贴顶母带削波归零）
-- 🪄 soxr 重采样（precision=28）— 96kHz 降采样阻带抑制优 6.4dB
+- 🪄 重采样自动探测 — soxr precision=28（VPS 用），Termux ffmpeg 8.1.2 soxr 有 bug 自动降级 swr
 - 🖼️ 封面保留 — opusenc --picture 嵌入专辑封面（ffmpeg Ogg muxer 无 native cover）
 - 🏷️ metadata 完整搬运 — 22 个 tags 保留 + ReplayGain 自动转 R128（RFC 7845）
 - 📁 已存在 `.opus` 时自动命名 `song (2).opus`，绝不覆盖
@@ -30,6 +30,7 @@ Termux Opus 转码器 — 将 Hi-Res FLAC 批量转码为 Opus 510kbps VBR（音
 - **opus-tools**（v1.2.0 新增依赖，提供 opusenc）：`pkg install opus-tools`
 
 > ⚠️ v1.2.0 起转码链使用 opusenc（音质升级 + 封面 + 510k），未安装会报错并提示安装命令
+> ⚠️ v1.2.1 已知问题：Termux ffmpeg 8.1.2 嘅 libsoxr 有 bug（Android NEON 编译），脚本会自动探测并降级到 swr（功能完整，仅重采样阻带抑制差约 6dB）
 
 ---
 
