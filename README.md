@@ -206,6 +206,38 @@ A:
 
     rm ~/.local/bin/opus-trans
 
+### Q: v1.1.0 配色唔满意，想回退到 v1.0.4？
+A: 有两种方法：
+
+**方法 1：从备份回退（最简单）**
+
+如果你有 opus-trans.sh.v1.0.4.bak 备份文件：
+
+    cp opus-trans.sh.v1.0.4.bak ~/.local/bin/opus-trans
+    chmod +x ~/.local/bin/opus-trans
+    opus-trans --version
+    # 应该输出：🎵 opus-trans v1.0.4
+
+**方法 2：从 Git tag 回退**
+
+如果你有 Git 仓库（~/workspace/opus-trans/）：
+
+喺开发机（VPS）导出 v1.0.4 版本：
+
+    cd ~/workspace/opus-trans
+    git show v1.0.4:opus-trans.sh > opus-trans-v1.0.4.sh
+
+然后 scp 传送到 Termux：
+
+    scp opus-trans-v1.0.4.sh u0_aXXX@192.168.X.X:~/
+
+喺 Termux 安装：
+
+    cp opus-trans-v1.0.4.sh ~/.local/bin/opus-trans
+    chmod +x ~/.local/bin/opus-trans
+    opus-trans --version
+    # 应该输出：🎵 opus-trans v1.0.4 — Hi-Res FLAC → Opus 320k VBR
+
 ---
 
 ## 更新日志
