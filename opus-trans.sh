@@ -31,7 +31,7 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
 MAGENTA='\033[1;35m'   # 目录用 — 紫色粗体
-BRIGHTBLUE='\033[1;34m' # 编号用 — 蓝色粗体
+BOLDGREEN='\033[1;32m'  # 编号用 — 鲜绿粗体（醒目，唔撞文件名/大小/目录）
 NC='\033[0m' # No Color
 
 # ── 辅助函数 ──
@@ -225,7 +225,7 @@ display_list() {
         local size
         size=$(stat -c%s "$fpath" 2>/dev/null || stat -f%z "$fpath" 2>/dev/null || echo 0)
 
-        echo -e "  ${BRIGHTBLUE}${grp}${num}.${NC} ${fname}  ${CYAN}$(file_size_human "$size")${NC}${exists_marker}"
+        echo -e "  ${BOLDGREEN}${grp}${num}.${NC} ${fname}  ${CYAN}$(file_size_human "$size")${NC}${exists_marker}"
     done
 
     echo ""
@@ -436,7 +436,7 @@ confirm_and_transcode() {
             exists_marker=" ${YELLOW}→ ${new_name}${NC}"
         fi
 
-        echo -e "  ${BRIGHTBLUE}${grp}${num}.${NC} ${fname}${exists_marker}"
+        echo -e "  ${BOLDGREEN}${grp}${num}.${NC} ${fname}${exists_marker}"
     done
     echo ""
     echo -ne "确认？${BOLD}(y 开始，q 取消，大小写均可)${NC}: "

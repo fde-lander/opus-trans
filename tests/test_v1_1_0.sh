@@ -25,11 +25,11 @@ else
     fail "T1.1 MAGENTA 常量不存在"
 fi
 
-# T1.2: BRIGHTBLUE 常量存在
-if grep -q "BRIGHTBLUE=" "$SCRIPT_PATH"; then
-    ok "T1.2 BRIGHTBLUE 常量存在"
+# T1.2: BOLDGREEN 常量存在
+if grep -q "BOLDGREEN=" "$SCRIPT_PATH"; then
+    ok "T1.2 BOLDGREEN 常量存在"
 else
-    fail "T1.2 BRIGHTBLUE 常量不存在"
+    fail "T1.2 BOLDGREEN 常量不存在"
 fi
 
 # T1.3: MAGENTA 值正确 (1;35m)
@@ -39,11 +39,11 @@ else
     fail "T1.3 MAGENTA 值不正确"
 fi
 
-# T1.4: BRIGHTBLUE 值正确 (1;34m)
-if grep -q "BRIGHTBLUE=.\\\\033\[1;34m" "$SCRIPT_PATH"; then
-    ok "T1.4 BRIGHTBLUE 值为 \\033[1;34m"
+# T1.4: BOLDGREEN 值正确 (1;32m)
+if grep -q "BOLDGREEN=.\\\\033\[1;32m" "$SCRIPT_PATH"; then
+    ok "T1.4 BOLDGREEN 值为 \\033[1;32m"
 else
-    fail "T1.4 BRIGHTBLUE 值不正确"
+    fail "T1.4 BOLDGREEN 值不正确"
 fi
 
 # ── 测试组 2：display_list() 目录行使用 MAGENTA ──
@@ -74,21 +74,21 @@ fi
 # ── 测试组 3：display_list() 文件行编号使用 BRIGHTBLUE ──
 echo "--- 测试组 3：display_list 文件行编号 ---"
 
-# T3.1: 文件行编号使用 BRIGHTBLUE
-if sed -n '/^display_list/,/^}/p' "$SCRIPT_PATH" | grep -q 'BRIGHTBLUE.*\${grp}\${num}'; then
-    ok "T3.1 文件行编号使用 BRIGHTBLUE"
+# T3.1: 文件行编号使用 BOLDGREEN
+if sed -n '/^display_list/,/^}/p' "$SCRIPT_PATH" | grep -q 'BOLDGREEN.*\${grp}\${num}'; then
+    ok "T3.1 文件行编号使用 BOLDGREEN"
 else
-    fail "T3.1 文件行编号未使用 BRIGHTBLUE"
+    fail "T3.1 文件行编号未使用 BOLDGREEN"
 fi
 
-# ── 测试组 4：confirm_and_transcode() 确认列表编号使用 BRIGHTBLUE ──
+# ── 测试组 4：confirm_and_transcode() 确认列表编号使用 BOLDGREEN ──
 echo "--- 测试组 4：confirm_and_transcode 确认列表 ---"
 
-# T4.1: 确认列表编号使用 BRIGHTBLUE
-if sed -n '/^confirm_and_transcode/,/^}/p' "$SCRIPT_PATH" | grep -q 'BRIGHTBLUE.*\${grp}\${num}'; then
-    ok "T4.1 确认列表编号使用 BRIGHTBLUE"
+# T4.1: 确认列表编号使用 BOLDGREEN
+if sed -n '/^confirm_and_transcode/,/^}/p' "$SCRIPT_PATH" | grep -q 'BOLDGREEN.*\${grp}\${num}'; then
+    ok "T4.1 确认列表编号使用 BOLDGREEN"
 else
-    fail "T4.1 确认列表编号未使用 BRIGHTBLUE"
+    fail "T4.1 确认列表编号未使用 BOLDGREEN"
 fi
 
 # ── 测试组 5：版本号 ──
