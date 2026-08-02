@@ -94,21 +94,21 @@ fi
 # ── 测试组 5：版本号 ──
 echo "--- 测试组 5：版本号 ---"
 
-# T5.1: VERSION = 1.1.0
-if grep -q 'readonly VERSION="1.1.0"' "$SCRIPT_PATH"; then
-    ok "T5.1 VERSION = 1.1.0"
+# T5.1: VERSION = 1.2.0（v1.2.0 音质升级版）
+if grep -q 'readonly VERSION="1.2.0"' "$SCRIPT_PATH"; then
+    ok "T5.1 VERSION = 1.2.0"
 else
-    fail "T5.1 VERSION 不是 1.1.0"
+    fail "T5.1 VERSION 不是 1.2.0"
 fi
 
 # ── 测试组 6：功能逻辑不变（回归保护）──
 echo "--- 测试组 6：回归保护 ---"
 
-# T6.1: 转码命令不变（跨行，分别检查关键参数）
-if grep -q '\-c:a libopus' "$SCRIPT_PATH" && grep -q '\-b:a.*BITRATE' "$SCRIPT_PATH" && grep -q '\-vbr on' "$SCRIPT_PATH" && grep -q '\-map_metadata 0' "$SCRIPT_PATH"; then
-    ok "T6.1 转码命令保持不变"
+# T6.1: 转码链已升级（v1.2.0：ffmpeg 预处理 + opusenc 管道，保留关键架构）
+if grep -q 'opusenc' "$SCRIPT_PATH" && grep -q 'PIPESTATUS' "$SCRIPT_PATH" && grep -q '\-af.*SOXR' "$SCRIPT_PATH"; then
+    ok "T6.1 转码链已升级（opusenc 管道 + SOXR + PIPESTATUS）"
 else
-    fail "T6.1 转码命令被修改"
+    fail "T6.1 转码链升级不完整"
 fi
 
 # T6.2: parse_selection 函数仍存在

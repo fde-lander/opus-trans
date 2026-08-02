@@ -8,8 +8,9 @@
 set -euo pipefail
 
 # ── 常量 ──
-readonly VERSION="1.1.0"
-readonly BITRATE="320k"
+readonly VERSION="1.2.0"
+readonly BITRATE="510k"
+readonly SOXR="aresample=48000:resampler=soxr:precision=28"
 readonly SUPPORTED_EXT="flac wav ape wv mp3 m4a aac ogg wma aiff"
 # 注意：.opus 也在扫描范围内（可从 opus 转其他格式，但实际场景极少）
 
@@ -53,7 +54,7 @@ print_usage() {
 }
 
 print_version() {
-    echo -e "${CYAN}🎵 opus-trans${NC} ${BOLD}v${VERSION}${NC} — Hi-Res FLAC → Opus 320k VBR"
+    echo -e "${CYAN}🎵 opus-trans${NC} ${BOLD}v${VERSION}${NC} — Hi-Res FLAC → Opus 510k VBR"
 }
 
 # ── Phase 1: 前置检查 ──
@@ -64,6 +65,17 @@ check_ffmpeg() {
         echo ""
         echo "请先安装 ffmpeg:"
         echo "  pkg install ffmpeg"
+        exit 1
+    fi
+}
+
+check_opusenc() {
+    if ! command -v opusenc &>/dev/null; then
+        echo -e "${RED}❌ 错误: opusenc 未安装${NC}"
+        echo ""
+        echo "v1.2.0 起转码链使用 opusenc（音质升级，支持封面 + 510k）"
+        echo "请先安装 opus-tools:"
+        echo "  pkg install opus-tools"
         exit 1
     fi
 }
@@ -398,15 +410,208 @@ generate_output_name() {
     echo "$output"
 }
 
+# ── v1.2.0 音质升级：位深检测 ──
+# 检测源音频位深（24bit FLAC 的 container 系 s32，必须用 bits_per_raw_sample）
+detect_depth() {
+    local input_file="$1"
+    local src_fmt src_raw src_bits depth
+
+    src_fmt=$(ffprobe -v error -select_streams a:0 -show_entries stream=sample_fmt -of default=nw=1:nk=1 "$input_file")
+    src_raw=$(ffprobe -v error -select_streams a:0 -show_entries stream=bits_per_raw_sample -of default=nw=1:nk=1 "$input_file")
+    src_bits=$(ffprobe -v error -select_streams a:0 -show_entries stream=bits_per_sample -of default=nw=1:nk=1 "$input_file")
+
+    # 浮点格式（flt/dbl）用 bits_per_sample；整数格式用 bits_per_raw_sample
+    if [[ "$src_fmt" == *"flt"* || "$src_fmt" == *"dbl"* ]]; then
+        depth="$src_bits"
+    else
+        depth="$src_raw"
+    fi
+
+    # N/A/空/0 → 默认 24（罕见情况保守处理）
+    [[ "$depth" == "N/A" || "$depth" == "" || "$depth" == "0" ]] && depth="24"
+
+    echo "$depth"
+}
+
+# ── v1.2.0 音质升级：位深 → 管道编码器映射 ──
+depth_to_pipe_fmt() {
+    case "$1" in
+        16) echo "pcm_s16le" ;;
+        24) echo "pcm_s24le" ;;
+        32) echo "pcm_f32le" ;;
+        *)  echo "pcm_s24le" ;;
+    esac
+}
+
+# ── v1.2.0 音质升级：抽封面 ──
+# 从 FLAC 抽 attached_pic → 临时文件；无封面时返回空
+extract_cover() {
+    local input_file="$1"
+    # ⚠️ 必须加 .png 扩展名，否则 ffmpeg 无法识别输出格式（关键陷阱 3）
+    local tmpcover
+    tmpcover="$(mktemp /tmp/opus-trans-cover.XXXXXX).png"
+
+    # 从 FLAC 抽封面（若有）；-v error 对封面抽取没问题（唔需要 astats 输出）
+    ffmpeg -v error -i "$input_file" -map 0:v -c:v copy -y "$tmpcover" 2>/dev/null || true
+    # 成功标志：文件存在且 > 0 字节（无封面时 ffmpeg 报 "Stream map matches no streams" 但退出码可能仍 0）
+    if [[ -s "$tmpcover" ]]; then
+        echo "$tmpcover"
+    else
+        rm -f "$tmpcover"
+        echo ""
+    fi
+}
+
+# ── v1.2.0 音质升级：扫峰值（决定衰减量）──
+# ⚠️⚠️ 关键陷阱：绝对唔可以加 -v error！
+#   astats 嘅统计输出行喺 stderr，-v error 会连「Peak level dB」一齐吞掉，PEAK 变空
+scan_peak() {
+    local input_file="$1"
+    local peak
+
+    peak=$(ffmpeg -i "$input_file" \
+        -af "aformat=sample_fmts=flt,astats=metadata=1" \
+        -f null - 2>&1 | grep -iE "Peak level dB" | head -1 | grep -oE '\-?[0-9]+\.[0-9]+' || true)
+
+    # 扫峰值失败 → 保守返回 -1.5（按最坏情况衰减）
+    if [[ -z "$peak" ]]; then
+        echo "-1.5"
+    else
+        echo "$peak"
+    fi
+}
+
+# ── v1.2.0 音质升级：计算衰减量（PAD）──
+# 规则：源峰值 P > -1.5 dBFS → 衰减到 -1.5 dBFS（PAD 系负数）
+#      源峰值 P ≤ -1.5 dBFS → 唔衰减（PAD=0）
+# ⚠️ 曾犯错误：写成 PAD = P + 1.5（正数）= 增益 1.5dB，令削波更严重！
+# ⚠️ 方波极端实测：源峰值 -0.026 → PAD=-1.47 仍残留 18 个削波样本（0.0023%）
+#   加下限保护：PAD 至少 -1.5dB（杜绝方波等极端瞬态残余削波）
+calc_pad() {
+    local peak="$1"
+    awk -v p="$peak" 'BEGIN {
+        if (p > -1.5) {
+            pad = -(p + 1.5)
+            # 下限保护：PAD 最小 -1.5dB（峰值越接近 0dBFS 越要留足余量）
+            if (pad > -1.5) pad = -1.5
+            printf "%.2f", pad
+        } else {
+            printf "0"
+        }
+    }'
+}
+
+# ── v1.2.0 音质升级：metadata 搬运 ──
+# ⚠️ 实测发现：opusenc 从 WAV 管道输入时唔会自动继承源 tags（输出 format_tags 为空）
+#   必须手动将源 tags 转成 opusenc --comment 参数
+# ⚠️ ReplayGain 规范（RFC 7845）：REPLAYGAIN_* → R128_TRACK_GAIN / R128_ALBUM_GAIN
+#   转换公式：R128 = round((66 - RG_GAIN) * 256)
+# ⚠️ 用全局数组 META_ARGS 传递（避免子进程/字符串解析问题）
+declare -a META_ARGS=()
+
+build_metadata_args() {
+    local input_file="$1"
+    local tag_key tag_val rg_val r128_val
+    META_ARGS=()
+
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        # 去掉 TAG: 前缀，拆 key=value（第一个 = 分割，value 可含 =）
+        tag_key=$(echo "$line" | sed 's/^TAG://' | cut -d= -f1)
+        tag_val=$(echo "$line" | sed 's/^TAG://' | cut -d= -f2-)
+        [[ -z "$tag_key" || -z "$tag_val" ]] && continue
+
+        case "$tag_key" in
+            # ReplayGain → R128 转换（RFC 7845 规范）
+            REPLAYGAIN_TRACK_GAIN)
+                rg_val=$(echo "$tag_val" | grep -oE '[-0-9.]+' | head -1)
+                if [[ -n "$rg_val" ]]; then
+                    r128_val=$(awk -v rg="$rg_val" 'BEGIN { printf "%.0f", (66 - rg) * 256 }')
+                    META_ARGS+=("--comment" "R128_TRACK_GAIN=$r128_val")
+                fi
+                ;;
+            REPLAYGAIN_ALBUM_GAIN)
+                rg_val=$(echo "$tag_val" | grep -oE '[-0-9.]+' | head -1)
+                if [[ -n "$rg_val" ]]; then
+                    r128_val=$(awk -v rg="$rg_val" 'BEGIN { printf "%.0f", (66 - rg) * 256 }')
+                    META_ARGS+=("--comment" "R128_ALBUM_GAIN=$r128_val")
+                fi
+                ;;
+            # 跳过重复的 REPLAYGAIN_PEAK（R128 无需 peak）+ 编码器自带 tag
+            REPLAYGAIN_TRACK_PEAK|REPLAYGAIN_ALBUM_PEAK|encoder|ENCODER|tool)
+                ;;
+            *)
+                # 通用 tag 搬运（空值跳过）
+                META_ARGS+=("--comment" "${tag_key}=${tag_val}")
+                ;;
+        esac
+    done < <(ffprobe -v error -show_entries format_tags -of default=nw=1 "$input_file" 2>/dev/null || true)
+}
+
 transcode() {
     local input_file="$1"
     local output_file="$2"
 
-    ffmpeg -i "$input_file" \
-        -c:a libopus -b:a "$BITRATE" -vbr on \
-        -map_metadata 0 \
-        -loglevel error \
-        "$output_file" 2>&1
+    # ── 1. 抽封面（若有）──
+    local cover_path
+    cover_path=$(extract_cover "$input_file")
+    local has_cover=0
+    [[ -n "$cover_path" ]] && has_cover=1
+
+    # ── 2. 扫峰值（决定衰减量）──
+    local peak pad
+    peak=$(scan_peak "$input_file")
+    pad=$(calc_pad "$peak")
+
+    # ── 3. 智能位深（16→s16le / 24→s24le / 32→f32le）──
+    local src_depth pipe_fmt
+    src_depth=$(detect_depth "$input_file")
+    pipe_fmt=$(depth_to_pipe_fmt "$src_depth")
+
+    # ── 3.5 metadata 搬运（ReplayGain → R128）──
+    # ⚠️ 实测：opusenc 唔会自动继承 WAV 管道嘅源 tags，必须手动传 --comment
+    build_metadata_args "$input_file"
+
+    # ── 3.6 组装 opusenc 参数数组（避免空字符串参数坑）──
+    local -a enc_args=(--bitrate 510 --music --comp 10)
+    [[ ${#META_ARGS[@]} -gt 0 ]] && enc_args+=("${META_ARGS[@]}")
+    [[ "$has_cover" == "1" ]] && enc_args+=(--picture "$cover_path")
+
+    # ── 4. 管道转码（ffmpeg 预处理 → opusenc 编码）──
+    # ⚠️ 管道默认 16bit，必须用 PIPE_FMT 显式指定（关键陷阱 5）
+    # ⚠️ 唔好对已存在嘅 .opus 用 --picture，因为封面会重复（type 3 + type 0）
+    # ⚠️ PIPESTATUS 系动态数组，访问前必须先 copy（set -u 下直接读会 unbound variable）
+    local ffmpeg_status opusenc_status pipe_status
+    if [[ "$pad" == "0" ]]; then
+        # 无衰减：唔加 volume 滤镜
+        ffmpeg -v error -i "$input_file" \
+            -af "$SOXR" \
+            -c:a "$pipe_fmt" -f wav - 2>/dev/null | \
+        opusenc "${enc_args[@]}" \
+            - "$output_file" 2>/dev/null
+        pipe_status=("${PIPESTATUS[@]}")
+        ffmpeg_status=${pipe_status[0]}
+        opusenc_status=${pipe_status[1]}
+    else
+        # 有衰减：volume=PAD（负数 dB）
+        ffmpeg -v error -i "$input_file" \
+            -af "volume=${pad}dB,$SOXR" \
+            -c:a "$pipe_fmt" -f wav - 2>/dev/null | \
+        opusenc "${enc_args[@]}" \
+            - "$output_file" 2>/dev/null
+        pipe_status=("${PIPESTATUS[@]}")
+        ffmpeg_status=${pipe_status[0]}
+        opusenc_status=${pipe_status[1]}
+    fi
+
+    # ── 5. 清理封面临时文件 ──
+    [[ -n "$cover_path" ]] && rm -f "$cover_path"
+
+    # ── 6. 管道失败检测（关键陷阱 7）──
+    if [[ $ffmpeg_status -ne 0 || $opusenc_status -ne 0 ]]; then
+        return 1
+    fi
+    return 0
 }
 
 # ── Phase 5: 交互流程 + 汇总报告 ──
@@ -449,6 +654,7 @@ confirm_and_transcode() {
 
     echo ""
     local current=0
+    local cover_ok=0
     for idx in "${_indices[@]}"; do
         ((current++)) || true
         local fpath="${FILE_PATHS[$idx]}"
@@ -472,27 +678,58 @@ confirm_and_transcode() {
             ((already_exists++)) || true
         fi
 
-        echo -ne "[${current}/${total}] ${relpath}... "
+        # ── v1.2.0：固定 4 行进度（Termux 铁律：零刷新，印完即定）──
+        # 第 1 行：文件标题
+        echo -e "  [${current}/${total}] ${relpath}${name_note}"
+
+        # 第 2 行：峰值 + 衰减信息（预先扫描，用于显示）
+        local peak pad
+        peak=$(scan_peak "$fpath")
+        pad=$(calc_pad "$peak")
+        if [[ "$pad" == "0" ]]; then
+            echo -e "       峰值 ${peak} dBFS → 无需保护"
+        else
+            echo -e "       峰值 ${peak} dBFS → 应用 ${pad}dB 保护"
+        fi
+
+        # 第 3 行：转码中（实际执行）
+        echo -e "       转码中 (soxr → opus 510k)..."
 
         # 执行转码
+        local in_size out_size
+        in_size=$(stat -c%s "$fpath" 2>/dev/null || stat -f%z "$fpath" 2>/dev/null || echo 0)
         if transcode "$fpath" "$output_file"; then
             # 验证输出
             if [[ -f "$output_file" ]] && [[ $(stat -c%s "$output_file" 2>/dev/null || stat -f%z "$output_file" 2>/dev/null || echo 0) -gt 0 ]]; then
-                local out_size
                 out_size=$(stat -c%s "$output_file" 2>/dev/null || stat -f%z "$output_file" 2>/dev/null || echo 0)
-                echo -e "${GREEN}✅${NC} ${CYAN}$(file_size_human "$out_size")${NC}"
+                # 压缩率
+                local ratio=0
+                if [[ $in_size -gt 0 ]]; then
+                    ratio=$(( (in_size - out_size) * 100 / in_size ))
+                    [[ $ratio -lt 0 ]] && ratio=0
+                fi
+                # 封面检测（v1.2.0）
+                local cover_mark=""
+                if command -v opusinfo &>/dev/null; then
+                    if opusinfo "$output_file" 2>/dev/null | grep -q "METADATA_BLOCK_PICTURE"; then
+                        cover_mark="  封面 ✓"
+                        ((cover_ok++)) || true
+                    else
+                        cover_mark="  封面 ✗"
+                    fi
+                fi
+                # 第 4 行：结果（大小 + 压缩率 + 封面）
+                echo -e "       ${CYAN}$(file_size_human "$in_size")${NC} → ${CYAN}$(file_size_human "$out_size")${NC}  (压缩 ${ratio}%)${cover_mark}"
                 if [[ -z "$name_note" ]]; then
                     ((success++)) || true
-                else
-                    echo "       ${CYAN}→ ${new_name}${NC}"
                 fi
             else
-                echo -e "${RED}❌ 输出验证失败${NC}"
+                echo -e "       ${RED}❌ 输出验证失败${NC}"
                 ((failed++)) || true
                 failed_files+=("$fpath")
             fi
         else
-            echo -e "${RED}❌ 转码失败${NC}"
+            echo -e "       ${RED}❌ 转码失败${NC}"
             ((failed++)) || true
             failed_files+=("$fpath")
         fi
@@ -504,6 +741,7 @@ confirm_and_transcode() {
     echo -e "  ${GREEN}✅ 成功：${success}${NC}"
     [[ $already_exists -gt 0 ]] && echo -e "  ${YELLOW}🔁 已存在（自动命名）：${already_exists}${NC}"
     [[ $failed -gt 0 ]] && echo -e "  ${RED}❌ 失败：${failed}${NC}"
+    [[ $cover_ok -gt 0 ]] && echo -e "  ${CYAN}🖼️ 封面保留：${cover_ok}${NC}"
     echo ""
 
     if [[ ${#failed_files[@]} -gt 0 ]]; then
@@ -542,6 +780,7 @@ main() {
 
     # 前置检查
     check_ffmpeg
+    check_opusenc
     check_directory "$TARGET_DIR"
 
     # 扫描目录
