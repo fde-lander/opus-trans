@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # ── 常量 ──
-readonly VERSION="1.2.3"
+readonly VERSION="1.2.4"
 readonly BITRATE="510k"
 readonly SOXR="aresample=48000:resampler=soxr:precision=28"
 readonly SWR="aresample=48000"
@@ -108,12 +108,32 @@ print_version() {
 
 # ── Phase 1: 前置检查 ──
 
+# 平台检测（只影响安装提示文字，不影响转码逻辑）
+detect_platform() {
+    if [[ -n "${PREFIX:-}" && -d "${PREFIX:-}" ]]; then
+        echo "termux"          # Termux: $PREFIX=/data/data/com.termux/files/usr
+    elif command -v apt-get &>/dev/null; then
+        echo "debian"          # Debian/Ubuntu 系
+    else
+        echo "other"           # 其他 Linux（dnf/pacman/...）
+    fi
+}
+
+install_hint() {
+    local pkg="$1"
+    case "$(detect_platform)" in
+        termux)  echo "  pkg install $pkg" ;;
+        debian)  echo "  sudo apt install $pkg" ;;
+        *)       echo "  用你嘅包管理器安装 $pkg（apt/dnf/pacman/...）" ;;
+    esac
+}
+
 check_ffmpeg() {
     if ! command -v ffmpeg &>/dev/null; then
         echo -e "${RED}❌ 错误: ffmpeg 未安装${NC}"
         echo ""
         echo "请先安装 ffmpeg:"
-        echo "  pkg install ffmpeg"
+        install_hint "ffmpeg"
         exit 1
     fi
 }
@@ -124,7 +144,7 @@ check_opusenc() {
         echo ""
         echo "v1.2.0 起转码链使用 opusenc（音质升级，支持封面 + 510k）"
         echo "请先安装 opus-tools:"
-        echo "  pkg install opus-tools"
+        install_hint "opus-tools"
         exit 1
     fi
 }

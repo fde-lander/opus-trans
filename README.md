@@ -1,269 +1,283 @@
 # opus-trans 🐰
 
-Termux Opus 转码器 — 将 Hi-Res FLAC 批量转码为 Opus 510kbps VBR（音质升级版 v1.2.3）
+> **Hi-Res FLAC / WAV → Opus 510kbps VBR transcoder for Termux (Android) & Linux**
+> 手機 Termux / Linux 高音質轉碼神器 — 將 Hi-Res FLAC / WAV 批量轉碼為 Opus 510kbps VBR（最大聽感）
 
-适合将 mora 购买嘅 Hi-Res FLAC（24bit/48-96kHz，每首 80-150MB）转码为便携嘅 Opus 文件（每首约 17MB，**最大听感**）。
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Platform: Termux / Linux](https://img.shields.io/badge/Platform-Termux%20%2F%20Linux-blue.svg)]()
+[![Version: v1.2.4](https://img.shields.io/badge/Version-v1.2.4-green.svg)]()
+[![Shell: Bash](https://img.shields.io/badge/Shell-Bash-4EAA25.svg)]()
 
----
+A single-file Bash script that batch-transcodes **Hi-Res FLAC / WAV** (and other lossless/lossy formats) into high-quality **Opus 510kbps VBR** files — perfect for music bought from **mora** (Hi-Res FLAC 24bit/48-96kHz, 80-150MB per track) that you want as portable, phone-friendly copies (~15MB per track, **maximum audible quality**).
 
-## 功能
-
-- 🎯 递归扫描子目录（按目录分组 A B C ...，q 留俾取消命令）
-- 🎵 Opus 510kbps VBR（Opus 立体声硬顶）— 实测 480.9kbps，vs v1.1.0 实际只有 262-298kbps
-- 🎚️ 自适应削波保护 — 源峰值 > -1.5dBFS 自动衰减到 -1.5dBFS（贴顶母带削波归零）
-- 🪄 swr 重采样（v1.2.3 默认）— Termux ffmpeg 8.1.2 soxr 有 bug（segfault），默认强制 swr 稳定运行
-- 🖼️ 封面保留 — opusenc --picture 嵌入专辑封面（ffmpeg Ogg muxer 无 native cover）
-- 🏷️ metadata 完整搬运 — 22 个 tags 保留 + ReplayGain 自动转 R128（RFC 7845）
-- 📁 已存在 `.opus` 时自动命名 `song (2).opus`，绝不覆盖
-- 🛡️ 原文件只读，不修改不删除
-- 🔤 选择语法灵活：A1 / B1-B3 / B / A1,C2 / all
-- ⌨️ 支持小写输入：`a1` 同 `A1` 一致
-- 📊 智能文件大小显示（B/KB/MB/GB）+ 压缩率 + 封面标记
-- 📈 进度显示：每首固定 4 行，零刷新（Termux 稳定）
+Designed and tested on **Termux (Android)**, also works on **Debian / other Linux** desktops & servers. No macOS/Windows support (untested).
 
 ---
 
-## 前置要求
+## ✨ Features
 
-- **Termux**（F-Droid 版本，Play Store 版本已过时）
-- **ffmpeg**：`pkg install ffmpeg`
-- **opus-tools**（v1.2.0 新增依赖，提供 opusenc）：`pkg install opus-tools`
-
-> ⚠️ v1.2.0 起转码链使用 opusenc（音质升级 + 封面 + 510k），未安装会报错并提示安装命令
-> ⚠️ v1.2.3 默认使用 swr 重采样（Termux ffmpeg 8.1.2 嘅 libsoxr 有 bug 会 segfault）。如日后想改返 soxr 自动探测：`export OPUS_TRANS_FORCE_SWR=0` 再运行
+- 🎯 **Recursive directory scanning** — groups files by folder (A, B, C...), `q` reserved for quit
+- 🎵 **Opus 510kbps VBR** (Opus stereo hard ceiling) — measured 480.9kbps actual, vs 262-298kbps on old 320k setting
+- 🎚️ **Adaptive clipping protection** — source peak > -1.5dBFS is auto-attenuated to -1.5dBFS (eliminates clipping from hot-mastered tracks)
+- 🪄 **swr resampling by default (v1.2.3)** — Termux ffmpeg 8.1.2 has a **libsoxr bug (segfault)**, swr is the stable default
+- 🖼️ **Album art preserved** — embedded via `opusenc --picture` (ffmpeg Ogg muxer has no native cover support)
+- 🏷️ **Full metadata migration** — 22 tags preserved + ReplayGain auto-converted to R128 (RFC 7845)
+- 📁 **Never overwrites** — existing `.opus` gets auto-renamed to `song (2).opus`
+- 🛡️ **Source files untouched** — read-only, never modified or deleted
+- 🔤 **Flexible selection syntax** — `A1` / `B1-B3` / `B` / `A1,C2` / `all` (case-insensitive)
+- 📊 **Smart file size display** (B/KB/MB/GB) + compression ratio + cover-art marker
+- 📈 **Progress display** — fixed 4 lines per track, zero refresh (Termux-stable)
 
 ---
 
-## 安装
+## 📥 Installation
 
-### 前置：传送脚本到 Termux
+### Termux
 
-opus-trans.sh 喺你嘅开发机（VPS / 电脑）上，需要先传送到 Termux。
+**Step 1 — Install dependencies**
 
-**方法 A：scp（推荐，需先启用 sshd）**
+    pkg install ffmpeg opus-tools
 
-喺 Termux 启用 sshd：
-
-    pkg install openssh
-    passwd                  # 设置 Termux 密码
-    sshd                    # 启动 sshd 守护进程
-    ifconfig | grep 192.168 # 查 IP（例如 192.168.1.100）
-
-喺 VPS 推送脚本：
-
-    scp /home/hermes/workspace/opus-trans/opus-trans.sh u0_aXXX@192.168.1.100:~/
-
-> `u0_aXXX` 系 Termux 嘅用户名（用 `whoami` 查 Termux 入面嘅当前用户名）
-
-**方法 B：Termux 内置文件共享**
-
-Termux 提供 `~/storage/shared/` 访问 Android 共享存储：
-
-    # 喺 VPS 复制脚本到共享文件夹（通过其他方式：adb、syncthing、云盘）
-    # 然后喺 Termux：
-    cp /sdcard/Download/opus-trans.sh ~/.local/bin/opus-trans
-
-**方法 C：直接喺 Termux 编辑**
-
-如果只系短脚本，可以喺 Termux 用 nano/vim 直接编辑：
-
-    nano ~/.local/bin/opus-trans
-    # 粘贴脚本内容，保存
-    chmod +x ~/.local/bin/opus-trans
-
-### 步骤 1：安装到 ~/.local/bin
-
-Termux 默认**冇** `~/.local` 目录，需要手动创建：
+**Step 2 — Copy the script to `~/.local/bin`**
 
     mkdir -p ~/.local/bin
     cp opus-trans.sh ~/.local/bin/opus-trans
     chmod +x ~/.local/bin/opus-trans
 
-### 步骤 2：确保 ~/.local/bin 喺 PATH 中
+**Step 3 — Make sure `~/.local/bin` is in PATH**
 
-Termux 默认 PATH 系 `~/.local/bin` **唔喺度**，必须手动加。
-
-**方法 A（推荐）**：喺 `~/.bashrc` 末尾加入
+Termux does NOT include `~/.local/bin` in PATH by default. Add it:
 
     echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-
-**方法 B**：喺 `~/.profile` 加入（适用于 login shell）
-
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.profile
-
-**步骤 3**：重启 Termux 或执行
-
     source ~/.bashrc
 
-**步骤 4**：验证
+**Step 4 — Verify**
 
     opus-trans --version
-    # 应该输出：🎵 opus-trans v1.1.0 — Hi-Res FLAC → Opus 320k VBR
+    # 🎵 opus-trans v1.2.4 — Hi-Res FLAC → Opus 510k VBR
 
-**如果仍然 `command not found`**：
+> **Getting the script onto your phone**: use `scp` (after `pkg install openssh` + `sshd`), or copy via Termux's `~/storage/shared/` (Android shared storage), or download directly from the [Releases page](https://github.com/fde-lander/opus-trans/releases).
 
-检查 PATH 是否真系包含 ~/.local/bin：
+### Debian / Ubuntu / Linux
 
-    echo $PATH
+    sudo apt install ffmpeg opus-tools
+    sudo cp opus-trans.sh /usr/local/bin/opus-trans
+    sudo chmod +x /usr/local/bin/opus-trans
 
-睇下有没有 `~/.local/bin`（实际会展开为 `/data/data/com.termux/files/home/.local/bin`）。
+### Other Linux distros
 
-如果冇，临时测试：
-
-    export PATH="$HOME/.local/bin:$PATH"
-    opus-trans --version
-
-如果有效，永久加入 PATH（重做步骤 2）。
+    # Replace with your package manager
+    sudo dnf install ffmpeg opus-tools      # Fedora
+    sudo pacman -S ffmpeg opus-tools        # Arch
 
 ---
 
-## 使用
+## 🚀 Usage
 
-    # 扫描当前目录
-    cd ~/storage/music/某专辑
+    # Scan current directory
+    cd ~/storage/music/SomeAlbum
     opus-trans
 
-    # 扫描指定目录
-    opus-trans /sdcard/Music/某专辑
+    # Scan a specific directory
+    opus-trans /sdcard/Music/SomeAlbum
 
-    # 显示版本
+    # Show version / help
     opus-trans --version
-
-    # 显示帮助
     opus-trans --help
 
----
+### Selection syntax (case-insensitive)
 
-## 选择语法（大小写均可）
+| Input        | Meaning                              |
+|--------------|--------------------------------------|
+| `a1` / `A1`  | File 1 in group A                    |
+| `b1-b3`      | Files 1 to 3 in group B              |
+| `b`          | Entire group B                       |
+| `a1,c2`      | Multiple selections                  |
+| `a,c`        | Entire groups A and C                |
+| `all` / empty | All files                           |
+| `q`          | Quit                                 |
 
-| 输入 | 含义 |
-|------|------|
-| `a1` 或 `A1` | 选择 A 组第 1 首 |
-| `b1-b3` | 选择 B 组第 1 到第 3 首 |
-| `b` | 选择整个 B 组 |
-| `a1,c2` | 混合选择多个 |
-| `a,c` | 选择整个 A 组和 C 组 |
-| `all` 或 `a` 或 `空 Enter` | 全部文件 |
-| `q` | 取消 |
+Valid group letters: `A B C D E F G H I J K L M N O P R S T U V W X Y Z` (25 letters; `q` is reserved for quit).
 
-**有效组字母**（共 25 个）：A B C D E F G H I J K L M N O P R S T U V W X Y Z
-（q 唔系有效组字母，因为 q 系取消命令）
-
-**跳过规则**：
-- `q1`、`q2` 等 q 开头嘅组合 → 静默跳过（用户嘅意图系想取消）
-- `xyz` 等无效格式 → 报错退出
-- `b99`（编号过大）→ 警告 + 跳过，让有效项继续处理
-- `b1-b5` 但 `b3` 不存在 → 跳过 B3，转码 B1,B2,B4,B5
+**Skip rules**: `q1`/`q2` → silently skipped; invalid format like `xyz` → error; `b99` (out of range) → warning + skip; `b1-b5` with missing `b3` → transcode 1,2,4,5.
 
 ---
 
-## 输出位置
+## 📁 Output
 
-转换后嘅 `.opus` 文件放喺**原文件同目录**，同名：
+Transcoded `.opus` files are written **next to the source files**:
 
-    某专辑/
-    ├── song_A.flac      (原文件，唔郁)
-    ├── song_A.opus      (新生成，约 10MB)
-    ├── song_B.flac
-    ├── song_B.opus
+    SomeAlbum/
+    ├── song_A.flac      (source, untouched)
+    ├── song_A.opus      (new, ~15MB)
     └── Disc1/
         ├── track1.flac
         └── track1.opus
 
-已存在 `.opus` 时：
+Existing `.opus` files are never overwritten:
 
-    song.opus        (已有)
-    song (2).opus    (新生成)
-    song (3).opus    (再生成)
+    song.opus        (existing)
+    song (2).opus    (new)
 
----
-
-## 支持的输入格式
+### Supported input formats
 
     flac  wav  ape  wv  mp3  m4a  aac  ogg  wma  aiff
 
 ---
 
-## 常见问题
+## 🔧 How it works
 
-### Q: 为什么用 Opus 唔用 MP3？
-A: Opus 喺任何 bitrate 都完胜 MP3。MP3 320kbps 仍可被 ABX 测试分辨，Opus 320kbps 已经达到「客观透明」。参考：r/audiophile、Hydrogenaudio 共识。
+The v1.2.x pipeline uses a **two-stage chain** for maximum quality:
 
-### Q: 为什么用 510kbps，唔用 320k？
-A: v1.2.0 实测发现 v1.1.0 设定 320k 实际只有 262-298kbps（libopus VBR 自动下调）。510k 系 Opus 立体声硬顶，实测 480.9kbps，为主人金耳朵提供最大听感余量。文件体积约 17MB/首（v1.1.0 约 10MB）。
+    Source (FLAC/WAV)
+        │  ffmpeg preprocessing (one pass):
+        │    • extract cover art      → temp file
+        │    • scan peak level        → adaptive clip protection
+        │    • smart bit depth        → 24bit / 16bit auto
+        │    • swr/soxr resampling    → 48kHz
+        ▼
+    WAV pipe (stdout)
+        │  opusenc 510k VBR:
+        │    • --picture embeds cover art
+        │    • --comment carries all metadata (22 tags)
+        │    • ReplayGain → R128 conversion (RFC 7845)
+        ▼
+    Output: song.opus
 
-### Q: 原文件会被删吗？
-A: 不会。FFmpeg 只读取输入文件，写入新文件。原 FLAC 完全唔郁。
-
-### Q: 几时应该备份 FLAC？
-A: Opus 系 lossy 转码，理论上唔可以逆向恢复。建议保留原始 FLAC 备份（例如云盘），Opus 只做便携副本。
-
-### Q: v1.2.0 点解要用 opusenc？纯 ffmpeg 唔得咩？
-A: 三个原因：
-1. ffmpeg Ogg muxer 无 native cover art 支持（trac #4448 自 2014 未修），封面会丢
-2. opusenc 可以做 --picture 嵌封面
-3. opusenc 重采样质量不如 soxr，所以先 ffmpeg 预处理（soxr 重采样 + 自适应削波）再管道畀 opusenc 编码
-
-### Q: 贴顶母带会唔会削波？
-A: v1.2.0 内置自适应削波保护：源峰值 > -1.5dBFS 会自动衰减到 -1.5dBFS。贴顶母带（0dBFS）会轻微降低音量（约 1.5dB，多数人唔察觉），但消除全部削波失真。非贴顶源（峰值 ≤ -1.5dBFS）完全唔郁，音量 0dB 变化。
-
-### Q: ReplayGain 标签会唔会保留？
-A: 会，并且自动转成 R128 规范格式（RFC 7845）：REPLAYGAIN_TRACK_GAIN → R128_TRACK_GAIN。例如 -6.50 dB → R128_TRACK_GAIN=18560。
-
-### Q: 唔记得 ~/.local/bin 嘅脚本喺边度？
-A:
-
-    ls ~/.local/bin/
-
-### Q: 装完后 command not found？
-A: 99% 系 PATH 问题。运行 `echo $PATH`，睇下有冇 `~/.local/bin`。冇嘅话重新执行步骤 2 同 3（确保 source ~/.bashrc 或重启 Termux）。
-
-### Q: ~/.local 系默认存在嘅吗？
-A: Termux **默认冇** ~/.local 目录。必须用 `mkdir -p ~/.local/bin` 手动创建。同埋 ~/.local/bin 默认唔喺 PATH，必须手动加。
-
-### Q: 想卸载？
-A:
-
-    rm ~/.local/bin/opus-trans
-
-### Q: v1.1.0 配色唔满意，想回退到 v1.0.4？
-A: 有两种方法：
-
-**方法 1：从备份回退（最简单）**
-
-如果你有 opus-trans.sh.v1.0.4.bak 备份文件：
-
-    cp opus-trans.sh.v1.0.4.bak ~/.local/bin/opus-trans
-    chmod +x ~/.local/bin/opus-trans
-    opus-trans --version
-    # 应该输出：🎵 opus-trans v1.0.4
-
-**方法 2：从 Git tag 回退**
-
-如果你有 Git 仓库（~/workspace/opus-trans/）：
-
-喺开发机（VPS）导出 v1.0.4 版本：
-
-    cd ~/workspace/opus-trans
-    git show v1.0.4:opus-trans.sh > opus-trans-v1.0.4.sh
-
-然后 scp 传送到 Termux：
-
-    scp opus-trans-v1.0.4.sh u0_aXXX@192.168.X.X:~/
-
-喺 Termux 安装：
-
-    cp opus-trans-v1.0.4.sh ~/.local/bin/opus-trans
-    chmod +x ~/.local/bin/opus-trans
-    opus-trans --version
-    # 应该输出：🎵 opus-trans v1.0.4 — Hi-Res FLAC → Opus 320k VBR
+**Why opusenc instead of plain ffmpeg?** The ffmpeg Ogg muxer has no native cover-art support (trac #4448, unfixed since 2014), so covers would be lost. `opusenc --picture` embeds them properly. ffmpeg handles preprocessing (resampling + clip protection), opusenc handles encoding.
 
 ---
 
-## 更新日志
+## 🔄 Resampler selection
 
-- **v1.1.0** — 列表美化：目录紫色粗体 + 编号鲜绿粗体（紫绿配色）
-- **v1.0.4** — 智能跳过不存在的编号 + 警告；q 从有效组字母中排除
-- **v1.0.3** — q 开头组合静默跳过；q 从编码中排除
-- **v1.0.2** — UX 打磨（文件大小显示、彩色输出、错误信息详细化）
-- **v1.0.0** — 首次发布
+The script defaults to **swr** (stable everywhere). Termux ffmpeg 8.1.2's libsoxr has a bug that segfaults on Android NEON builds — so swr is the safe default.
+
+**On Debian / other Linux** (where soxr works fine), you can switch to soxr for slightly better anti-aliasing (~6dB better stopband). Two ways:
+
+**Option A — edit the constant (recommended, persistent):**
+
+Open `opus-trans.sh` and change line ~23:
+
+    # Before:
+    USE_SOXR=0   # 1=use soxr, 0=use swr
+    # After:
+    USE_SOXR=1   # 1=use soxr, 0=use swr
+
+Then copy the modified file to `~/.local/bin/opus-trans` (or `/usr/local/bin/opus-trans`).
+
+**Option B — environment variable (temporary):**
+
+    export OPUS_TRANS_FORCE_SWR=0
+    opus-trans
+
+> ℹ️ `OPUS_TRANS_FORCE_SWR=1` (default) forces swr without probing. `=0` enables auto-detection: the script probes soxr once on the first selected file (0.3s test) and falls back to swr if it crashes or produces no output.
+
+---
+
+## ❓ FAQ
+
+**Q: Why Opus instead of MP3?**
+A: Opus beats MP3 at every bitrate. MP3 320kbps is still distinguishable in ABX tests; Opus 320kbps is objectively transparent. (r/audiophile, Hydrogenaudio consensus.)
+
+**Q: Why 510kbps instead of 320k?**
+A: v1.2.0 measurement showed the old "320k" setting actually produced only 262-298kbps (libopus VBR auto-downshifts). 510k is the Opus stereo hard ceiling; measured 480.9kbps actual — maximum headroom for critical listening. File size ~15MB/track vs ~10MB at old 320k.
+
+**Q: Are my source files modified?**
+A: No. ffmpeg only reads inputs; the original FLAC/WAV is never touched.
+
+**Q: Should I keep the FLAC backups?**
+A: Yes. Opus is lossy — irreversible. Keep your original FLAC as the archive copy; Opus is the portable convenience copy.
+
+**Q: Will hot-mastered (0dBFS) tracks clip?**
+A: No. v1.2.0+ has adaptive clipping protection: if source peak > -1.5dBFS, it's auto-attenuated to -1.5dBFS. Hot masters get a slight volume reduction (~1.5dB, barely noticeable) but zero clipping distortion. Normal tracks (peak ≤ -1.5dBFS) are untouched.
+
+**Q: Is ReplayGain preserved?**
+A: Yes, auto-converted to R128 (RFC 7845): e.g. `REPLAYGAIN_TRACK_GAIN=-6.50 dB` → `R128_TRACK_GAIN=18560`.
+
+**Q: Why does Termux use swr but my Linux PC can use soxr?**
+A: Termux's ffmpeg 8.1.2 is compiled with a buggy Android NEON libsoxr that segfaults. Debian's ffmpeg 7.1.3 has a working soxr. The script detects platform and install commands automatically; resampler defaults to swr everywhere for consistency.
+
+**Q: Can I uninstall?**
+A: Just remove the script:
+
+    rm ~/.local/bin/opus-trans     # Termux
+    sudo rm /usr/local/bin/opus-trans   # Linux
+
+---
+
+## 📜 Changelog
+
+### v1.2.4 (2026-08-02) — Public release prep 🌍
+- **Internationalized README** — English-first with Traditional Chinese summary, GitHub-flavored (badges, structured docs, FAQ, changelog)
+- **Platform-aware install hints** — the script now detects Termux / Debian / other Linux and shows the correct dependency install command (`pkg install` vs `sudo apt install` vs your package manager)
+- **MIT License** added
+- Cross-platform positioning: designed & tested on Debian, primary use on Termux (Android); Linux desktop/server supported; macOS/Windows untested
+
+### v1.2.3 (2026-08-02) — Stable release ✅
+- **Default swr resampling** — Termux users get stable runs out of the box (no env vars needed)
+- **Progress display sync** — now shows the actual resampler in use (swr/soxr), previously always showed "soxr" misleadingly
+- Master-verified on Termux: better sound, cover art present, 27MB → 15MB (42% compression)
+- Latest tag: `f60825b`
+
+### v1.2.2 (2026-08-02) — Fix
+- **Probe logic fix** — now detects ffmpeg exit code (139=SIGSEGV) instead of output-file size (segfault could produce >100KB before crash → false "soxr available")
+- **`OPUS_TRANS_FORCE_SWR` env var** added as a master switch
+- Test duration reduced 0.5s → 0.3s
+
+### v1.2.1 (2026-08-02) — Hotfix
+- **Termux ffmpeg soxr segfault auto-fallback** — soxr crash on Android NEON builds → auto-detect and switch to swr
+- **`/tmp` fix** — Termux has no `/tmp`; falls back to `$HOME`
+- Performance optimization
+
+### v1.2.0 (2026-08-02) — Major audio quality upgrade 🎉
+- **510kbps VBR** (Opus stereo ceiling; measured 480.9kbps) vs 262-298kbps before
+- **soxr resampling** for preprocessing (with swr fallback)
+- **Adaptive clipping protection** (-1.5dBFS ceiling)
+- **Cover art via opusenc `--picture`**
+- **Full metadata migration** — 22 tags + ReplayGain→R128 (RFC 7845)
+- **opus-tools dependency** added (provides opusenc)
+
+### v1.1.0 — List beautification
+- Directory names in magenta bold + numbering in bright green bold
+
+### v1.0.4 — Selection parser hardening
+- Smart skip for nonexistent numbers + warnings
+- `q` excluded from valid group letters
+
+### v1.0.3 — UX
+- `q`-prefixed combos silently skipped; `q` excluded from encoding
+
+### v1.0.2 — UX polish
+- File size display, colored output, detailed error messages
+
+### v1.0.0 — Initial release
+
+---
+
+## 📄 License
+
+[MIT](LICENSE) © 2026 超级猪兔兔 🐰
+
+---
+
+## 🌏 繁體中文摘要
+
+**opus-trans** 係一款單文件 Bash 腳本，專門喺 **手機 Termux** 上面，將 mora 購買嘅 **Hi-Res FLAC / WAV**（24bit/48-96kHz，每首 80-150MB）批量轉碼為高音質 **Opus 510kbps VBR** 文件（每首約 15MB，**最大聽感**）。
+
+**特點**：Opus 510k 立體聲硬頂（實測 480.9kbps）、自適應削波保護、封面保留、22 個 metadata tags 完整搬運、ReplayGain→R128、永不覆蓋原檔、原檔只讀。
+
+**安裝（Termux）**：
+- `pkg install ffmpeg opus-tools`
+- 複製 `opus-trans.sh` 到 `~/.local/bin/opus-trans` 並 `chmod +x`
+- `~/.local/bin` 加落 PATH（`.bashrc`）
+
+**安裝（Debian / Linux）**：
+- `sudo apt install ffmpeg opus-tools`
+- 複製到 `/usr/local/bin/opus-trans` 並 `chmod +x`
+
+**使用**：`opus-trans`（掃描當前目錄）或 `opus-trans /sdcard/Music/某專輯`
+
+**Debian 想用 soxr（音質略好）**：改 `opus-trans.sh` 第 23 行 `USE_SOXR=0` → `USE_SOXR=1`，再複製到安裝位置。Termux 用戶**唔好**改（ffmpeg 8.1.2 嘅 soxr 有 bug 會 crash）。
+
+**注意**：開發同測試喺 Debian 系統完成，實際主力用喺 Termux；Linux 桌面/伺服器都支援。macOS / Windows 未測試，暫不支援。
+

@@ -47,7 +47,7 @@ fi
 echo "--- 测试组 1：版本 + 常量 ---"
 
 # T1.1: VERSION = 1.2.1
-if grep -q 'readonly VERSION="1.2.3"' "$SCRIPT_PATH"; then
+if grep -q 'readonly VERSION="1.2.4"' "$SCRIPT_PATH"; then
     ok "T1.1 VERSION = 1.2.1"
 else
     fail "T1.1 VERSION 不是 1.2.1"
