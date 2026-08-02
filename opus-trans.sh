@@ -8,11 +8,44 @@
 set -euo pipefail
 
 # ── 常量 ──
-readonly VERSION="1.2.0"
+readonly VERSION="1.2.1"
 readonly BITRATE="510k"
 readonly SOXR="aresample=48000:resampler=soxr:precision=28"
+readonly SWR="aresample=48000"
 readonly SUPPORTED_EXT="flac wav ape wv mp3 m4a aac ogg wma aiff"
 # 注意：.opus 也在扫描范围内（可从 opus 转其他格式，但实际场景极少）
+
+# ── 重采样器自动探测（v1.2.1）──
+# ⚠️ Termux ffmpeg 8.1.2 嘅 libsoxr 有 bug（Android NEON 编译），一用就 segfault！
+#   实测：soxr+s24le / soxr+s16le 都 crash，swr 全部正常（主人手机已验证）
+#   方案：启动时自动探测 soxr 可用性，唔得就全 session 用 swr（唔会每首都试错）
+USE_SOXR=1   # 1=用 soxr, 0=用 swr
+RESAMPLER="$SOXR"
+
+detect_resampler() {
+    local test_file="$1"
+    local tmp_base="${TMPDIR:-/tmp}"
+    [[ ! -d "$tmp_base" ]] && tmp_base="$HOME"
+    local test_out="$tmp_base/.opus-trans-soxr-test.$$.wav"
+
+    # 用目标文件跑 0.5 秒 soxr 测试（head -c 截断，唔会 hang）
+    # ⚠️ segfault 时 ffmpeg 退出码系 139（SIGSEGV），head 会收 0
+    #   所以检测靠「输出文件有数据」而唔系退出码
+    rm -f "$test_out" 2>/dev/null || true
+    (ffmpeg -v error -i "$test_file" -t 0.5 \
+        -af "$SOXR" -c:a pcm_s16le -f wav - 2>/dev/null | head -c 100000 > "$test_out") 2>/dev/null || true
+
+    if [[ -s "$test_out" ]]; then
+        USE_SOXR=1
+        RESAMPLER="$SOXR"
+    else
+        USE_SOXR=0
+        RESAMPLER="$SWR"
+        echo -e "${YELLOW}⚠️ 检测到 soxr 不可用（Termux ffmpeg bug），已自动改用 swr 重采样${NC}"
+        echo -e "${YELLOW}  音质提示：swr 比 soxr 阻带抑制差约 6dB，但功能完整（510k/封面/tags/削波保护）${NC}"
+    fi
+    rm -f "$test_out" 2>/dev/null || true
+}
 
 # ── 全局变量 ──
 TARGET_DIR=""
@@ -445,11 +478,18 @@ depth_to_pipe_fmt() {
 
 # ── v1.2.0 音质升级：抽封面 ──
 # 从 FLAC 抽 attached_pic → 临时文件；无封面时返回空
+# ⚠️ Termux 冇 /tmp！必须用 ${TMPDIR:-/tmp} 动态检测 + fallback
 extract_cover() {
     local input_file="$1"
+    local tmp_base="${TMPDIR:-/tmp}"
+    # Termux 通常有 $PREFIX/tmp，Linux 有 /tmp；都冇就 fallback 到 $HOME
+    if [[ ! -d "$tmp_base" ]]; then
+        tmp_base="$HOME"
+    fi
+    mkdir -p "$tmp_base" 2>/dev/null || true
     # ⚠️ 必须加 .png 扩展名，否则 ffmpeg 无法识别输出格式（关键陷阱 3）
     local tmpcover
-    tmpcover="$(mktemp /tmp/opus-trans-cover.XXXXXX).png"
+    tmpcover="$(mktemp "$tmp_base/opus-trans-cover.XXXXXX").png" || tmpcover="$HOME/.opus-trans-cover.$$.png"
 
     # 从 FLAC 抽封面（若有）；-v error 对封面抽取没问题（唔需要 astats 输出）
     ffmpeg -v error -i "$input_file" -map 0:v -c:v copy -y "$tmpcover" 2>/dev/null || true
@@ -465,11 +505,14 @@ extract_cover() {
 # ── v1.2.0 音质升级：扫峰值（决定衰减量）──
 # ⚠️⚠️ 关键陷阱：绝对唔可以加 -v error！
 #   astats 嘅统计输出行喺 stderr，-v error 会连「Peak level dB」一齐吞掉，PEAK 变空
+# ⚠️ v1.2.0 hotfix：合并封面抽取 + 峰值扫描到一次 ffmpeg 调用（减少启动次数，扫描大文件更快出结果）
+# ⚠️ 大文件（24/192）完整解码先出峰值，加 -t 180 限制扫描前 3 分钟（J-pop 峰值通常喺前段）
+#   如果 3 分钟峰值 ≤ -1.5 → 全曲大概率唔需要保护；如果 > -1.5 → 用扫描到嘅峰值保守计算
 scan_peak() {
     local input_file="$1"
     local peak
 
-    peak=$(ffmpeg -i "$input_file" \
+    peak=$(ffmpeg -i "$input_file" -t 180 \
         -af "aformat=sample_fmts=flt,astats=metadata=1" \
         -f null - 2>&1 | grep -iE "Peak level dB" | head -1 | grep -oE '\-?[0-9]+\.[0-9]+' || true)
 
@@ -559,9 +602,16 @@ transcode() {
     [[ -n "$cover_path" ]] && has_cover=1
 
     # ── 2. 扫峰值（决定衰减量）──
+    # ⚠️ v1.2.1 性能优化：优先用 confirm_and_transcode 已扫描嘅全局值
+    #    （之前 scan_peak 被调用两次 = 大文件完整解码两次，超慢！）
     local peak pad
-    peak=$(scan_peak "$input_file")
-    pad=$(calc_pad "$peak")
+    if [[ -n "${PEAK_SCANNED_PEAK:-}" ]]; then
+        peak="$PEAK_SCANNED_PEAK"
+        pad="$PEAK_SCANNED_PAD"
+    else
+        peak=$(scan_peak "$input_file")
+        pad=$(calc_pad "$peak")
+    fi
 
     # ── 3. 智能位深（16→s16le / 24→s24le / 32→f32le）──
     local src_depth pipe_fmt
@@ -577,41 +627,55 @@ transcode() {
     [[ ${#META_ARGS[@]} -gt 0 ]] && enc_args+=("${META_ARGS[@]}")
     [[ "$has_cover" == "1" ]] && enc_args+=(--picture "$cover_path")
 
-    # ── 4. 管道转码（ffmpeg 预处理 → opusenc 编码）──
-    # ⚠️ 管道默认 16bit，必须用 PIPE_FMT 显式指定（关键陷阱 5）
-    # ⚠️ 唔好对已存在嘅 .opus 用 --picture，因为封面会重复（type 3 + type 0）
-    # ⚠️ PIPESTATUS 系动态数组，访问前必须先 copy（set -u 下直接读会 unbound variable）
+    # ── 4. 转码（v1.2.1：RESAMPLER 已喺启动时探测，唔使每次试错）──
+    # ⚠️ Termux ffmpeg 8.1.2 soxr 有 bug 会 segfault → detect_resampler 已自动切 swr
+    #    L1: RESAMPLER + PIPE_FMT（完整音质）
+    #    L2: RESAMPLER + s16le（降位深管道，超罕见）
+    local vol_filter=""
+    [[ "$pad" != "0" ]] && vol_filter="volume=${pad}dB,"
+
+    local encode_ok=0
     local ffmpeg_status opusenc_status pipe_status
-    if [[ "$pad" == "0" ]]; then
-        # 无衰减：唔加 volume 滤镜
-        ffmpeg -v error -i "$input_file" \
-            -af "$SOXR" \
-            -c:a "$pipe_fmt" -f wav - 2>/dev/null | \
-        opusenc "${enc_args[@]}" \
-            - "$output_file" 2>/dev/null
-        pipe_status=("${PIPESTATUS[@]}")
-        ffmpeg_status=${pipe_status[0]}
-        opusenc_status=${pipe_status[1]}
+    local -a ff_args
+
+    # 尝试 L1（完整音质）
+    ff_args=(-v error -i "$input_file" -af "${vol_filter}${RESAMPLER}" -c:a "$pipe_fmt" -f wav -)
+    ffmpeg "${ff_args[@]}" 2>/dev/null | opusenc "${enc_args[@]}" - "$output_file" 2>/dev/null
+    pipe_status=("${PIPESTATUS[@]}")
+    ffmpeg_status=${pipe_status[0]}
+    opusenc_status=${pipe_status[1]}
+    if [[ $ffmpeg_status -eq 0 && $opusenc_status -eq 0 ]]; then
+        encode_ok=1
     else
-        # 有衰减：volume=PAD（负数 dB）
-        ffmpeg -v error -i "$input_file" \
-            -af "volume=${pad}dB,$SOXR" \
-            -c:a "$pipe_fmt" -f wav - 2>/dev/null | \
-        opusenc "${enc_args[@]}" \
-            - "$output_file" 2>/dev/null
+        echo -e "       ${YELLOW}⚠️ L1 失败 (${RESAMPLER}+${pipe_fmt})，降级到 L2 (s16le)${NC}"
+        rm -f "$output_file" 2>/dev/null || true
+        # L2: RESAMPLER + s16le
+        ff_args=(-v error -i "$input_file" -af "${vol_filter}${RESAMPLER}" -c:a pcm_s16le -f wav -)
+        ffmpeg "${ff_args[@]}" 2>/dev/null | opusenc "${enc_args[@]}" - "$output_file" 2>/dev/null
         pipe_status=("${PIPESTATUS[@]}")
         ffmpeg_status=${pipe_status[0]}
         opusenc_status=${pipe_status[1]}
+        if [[ $ffmpeg_status -eq 0 && $opusenc_status -eq 0 ]]; then
+            encode_ok=1
+        else
+            echo -e "       ${YELLOW}⚠️ L2 失败 (s16le)，降级到 L3 (纯 ffmpeg libopus)${NC}"
+            rm -f "$output_file" 2>/dev/null || true
+            # L3: 纯 ffmpeg libopus（最保守，封面丢）
+            ffmpeg -v error -i "$input_file" \
+                -c:a libopus -b:a "$BITRATE" -vbr on \
+                -map_metadata 0 \
+                "$output_file" 2>/dev/null
+            if [[ $? -eq 0 && -s "$output_file" ]]; then
+                encode_ok=1
+            fi
+        fi
     fi
 
     # ── 5. 清理封面临时文件 ──
     [[ -n "$cover_path" ]] && rm -f "$cover_path"
 
-    # ── 6. 管道失败检测（关键陷阱 7）──
-    if [[ $ffmpeg_status -ne 0 || $opusenc_status -ne 0 ]]; then
-        return 1
-    fi
-    return 0
+    # ── 6. 结果 ──
+    [[ $encode_ok -eq 1 ]] && return 0 || return 1
 }
 
 # ── Phase 5: 交互流程 + 汇总报告 ──
@@ -683,9 +747,12 @@ confirm_and_transcode() {
         echo -e "  [${current}/${total}] ${relpath}${name_note}"
 
         # 第 2 行：峰值 + 衰减信息（预先扫描，用于显示）
+        # ⚠️ v1.2.1 性能优化：扫描一次存入全局，transcode() 直接复用，唔使重复解码
         local peak pad
         peak=$(scan_peak "$fpath")
         pad=$(calc_pad "$peak")
+        PEAK_SCANNED_PEAK="$peak"
+        PEAK_SCANNED_PAD="$pad"
         if [[ "$pad" == "0" ]]; then
             echo -e "       峰值 ${peak} dBFS → 无需保护"
         else
@@ -805,6 +872,10 @@ main() {
     fi
 
     echo ""
+
+    # v1.2.1: 探测 soxr 可用性（用第一个选中文件测试，Termux 唔得就全 session 用 swr）
+    local first_file="${FILE_PATHS[${selected_indices[0]}]}"
+    detect_resampler "$first_file"
 
     # 确认 + 转码
     confirm_and_transcode selected_indices

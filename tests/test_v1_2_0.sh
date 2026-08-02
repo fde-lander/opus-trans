@@ -46,11 +46,11 @@ fi
 # ═══════════════════════════════════════════════
 echo "--- 测试组 1：版本 + 常量 ---"
 
-# T1.1: VERSION = 1.2.0
-if grep -q 'readonly VERSION="1.2.0"' "$SCRIPT_PATH"; then
-    ok "T1.1 VERSION = 1.2.0"
+# T1.1: VERSION = 1.2.1
+if grep -q 'readonly VERSION="1.2.1"' "$SCRIPT_PATH"; then
+    ok "T1.1 VERSION = 1.2.1"
 else
-    fail "T1.1 VERSION 不是 1.2.0"
+    fail "T1.1 VERSION 不是 1.2.1"
 fi
 
 # T1.2: BITRATE = 510k
@@ -134,6 +134,20 @@ if grep -q '((counter++)) || true' "$SCRIPT_PATH"; then
     ok "T1.13 ((counter++)) 有 || true 保护"
 else
     fail "T1.13 ((counter++)) 缺少 || true 保护"
+fi
+
+# T1.13b: detect_resampler() 存在（v1.2.1 soxr 探测）
+if grep -q '^detect_resampler()' "$SCRIPT_PATH"; then
+    ok "T1.13b detect_resampler() 存在"
+else
+    fail "T1.13b detect_resampler() 缺失"
+fi
+
+# T1.13c: RESAMPLER 变量使用（转码链改用探测结果）
+if grep -q 'RESAMPLER' "$SCRIPT_PATH"; then
+    ok "T1.13c RESAMPLER 变量使用"
+else
+    fail "T1.13c RESAMPLER 变量缺失"
 fi
 
 # T1.14: 无 ANSI 清屏 / 无 \r / 无 raw mode（Termux 铁律）
