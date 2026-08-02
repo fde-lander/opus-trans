@@ -1,0 +1,8 @@
+# Backup files
+*.bak
+
+# Temporary / generated files
+findings.md
+progress.md
+HANDOFF.md
+task_plan.md
