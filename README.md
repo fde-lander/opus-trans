@@ -90,7 +90,7 @@ Termux 默认 PATH 系 `~/.local/bin` **唔喺度**，必须手动加。
 **步骤 4**：验证
 
     opus-trans --version
-    # 应该输出：🎵 opus-trans v1.0.4 — Hi-Res FLAC → Opus 320k VBR
+    # 应该输出：🎵 opus-trans v1.1.0 — Hi-Res FLAC → Opus 320k VBR
 
 **如果仍然 `command not found`**：
 
@@ -210,6 +210,7 @@ A:
 
 ## 更新日志
 
+- **v1.1.0** — 列表美化：目录紫色粗体 + 编号蓝色粗体（紫蓝星空配色）
 - **v1.0.4** — 智能跳过不存在的编号 + 警告；q 从有效组字母中排除
 - **v1.0.3** — q 开头组合静默跳过；q 从编码中排除
 - **v1.0.2** — UX 打磨（文件大小显示、彩色输出、错误信息详细化）
