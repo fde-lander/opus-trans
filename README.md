@@ -5,7 +5,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform: Termux / Linux](https://img.shields.io/badge/Platform-Termux%20%2F%20Linux-blue.svg)]()
-[![Version: v1.2.4](https://img.shields.io/badge/Version-v1.2.4-green.svg)]()
+[![Version: v1.3.0](https://img.shields.io/badge/Version-v1.3.0-green.svg)]()
 [![Shell: Bash](https://img.shields.io/badge/Shell-Bash-4EAA25.svg)]()
 
 A single-file Bash script that batch-transcodes **Hi-Res FLAC / WAV** (and other lossless/lossy formats) into high-quality **Opus 510kbps VBR** files — perfect for music bought from **mora** (Hi-Res FLAC 24bit/48-96kHz, 80-150MB per track) that you want as portable, phone-friendly copies (~15MB per track, **maximum audible quality**).
@@ -54,7 +54,7 @@ Termux does NOT include `~/.local/bin` in PATH by default. Add it:
 **Step 4 — Verify**
 
     opus-trans --version
-    # 🎵 opus-trans v1.2.4 — Hi-Res FLAC → Opus 510k VBR
+    # 🎵 opus-trans v1.3.0 — Hi-Res FLAC → Opus 510k VBR
 
 > **Getting the script onto your phone**: use `scp` (after `pkg install openssh` + `sshd`), or copy via Termux's `~/storage/shared/` (Android shared storage), or download directly from the [Releases page](https://github.com/fde-lander/opus-trans/releases).
 
@@ -84,6 +84,13 @@ Termux does NOT include `~/.local/bin` in PATH by default. Add it:
     # Show version / help
     opus-trans --version
     opus-trans --help
+
+### 🌏 Language selection (v1.3.0)
+
+The script asks for your language on first run. You can also preselect it:
+
+    OPUS_TRANS_LANG=en opus-trans     # English
+    OPUS_TRANS_LANG=zh opus-trans     # 繁體中文
 
 ### Selection syntax (case-insensitive)
 
@@ -207,6 +214,12 @@ A: Just remove the script:
 
 ## 📜 Changelog
 
+### v1.3.0 (2026-08-02) — Bilingual release 🌏
+- **Language selection at startup** — English / 繁體中文 (interactive or via `OPUS_TRANS_LANG=en|zh`)
+- **All user-facing messages internationalized** — placeholder-based message system, easy to add more languages
+- **Neutral attribution** — LICENSE/README use "opus-trans contributors" instead of a personal name
+- Full pipeline verified in both languages (scan → select → transcode → report)
+
 ### v1.2.4 (2026-08-02) — Public release prep 🌍
 - **Internationalized README** — English-first with Traditional Chinese summary, GitHub-flavored (badges, structured docs, FAQ, changelog)
 - **Platform-aware install hints** — the script now detects Termux / Debian / other Linux and shows the correct dependency install command (`pkg install` vs `sudo apt install` vs your package manager)
@@ -256,7 +269,7 @@ A: Just remove the script:
 
 ## 📄 License
 
-[MIT](LICENSE) © 2026 超级猪兔兔 🐰
+[MIT](LICENSE) © 2026 opus-trans contributors
 
 ---
 

@@ -1,19 +1,41 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# opus-trans — Termux Opus 转码器
-# 将 Hi-Res FLAC 批量转码为 Opus 320kbps VBR
-# 作者: 超级猪兔兔 🐰
-# 日期: 2026-08-02
+# opus-trans — Hi-Res FLAC/WAV → Opus 510k VBR transcoder
+# Batch transcode Hi-Res FLAC/WAV to high-quality Opus for Termux (Android) & Linux
+# License: MIT
 # Spec: ~/.hermes/docs/superpowers/specs/2026-08-02-opus-trans-design.md
 
 set -euo pipefail
 
 # ── 常量 ──
-readonly VERSION="1.2.4"
+readonly VERSION="1.3.0"
 readonly BITRATE="510k"
 readonly SOXR="aresample=48000:resampler=soxr:precision=28"
 readonly SWR="aresample=48000"
 readonly SUPPORTED_EXT="flac wav ape wv mp3 m4a aac ogg wma aiff"
 # 注意：.opus 也在扫描范围内（可从 opus 转其他格式，但实际场景极少）
+
+# ── 语言系统（占位符，由脚本最后 init_language() 设置）──
+# 所有用户可见讯息都用 $MSG_* 变量
+# 语言定义放喺脚本最后（init_language），方便拓展新语言
+# 可用环境变量 OPUS_TRANS_LANG=en|zh 预设语言，跳过交互选择
+LANG_CODE="${OPUS_TRANS_LANG:-}"
+
+# ── 语言选择 ──
+select_language() {
+    if [[ -z "$LANG_CODE" ]]; then
+        echo "Select language / 選擇語言:"
+        echo "  [1] English"
+        echo "  [2] 繁體中文"
+        echo -n "Choice / 選擇: "
+        read -r lang_choice
+        case "$lang_choice" in
+            1|en|EN|english) LANG_CODE="en" ;;
+            2|zh|zh-TW|zh-tw|zh_TW|tw|TC|繁|中) LANG_CODE="zh" ;;
+            *) LANG_CODE="en" ;;
+        esac
+    fi
+    init_language
+}
 
 # ── 重采样器自动探测（v1.2.2）──
 # ⚠️ Termux ffmpeg 8.1.2 嘅 libsoxr 有 bug（Android NEON 编译），一用就 segfault！
@@ -51,14 +73,14 @@ detect_resampler() {
         else
             USE_SOXR=0
             RESAMPLER="$SWR"
-            echo -e "${YELLOW}⚠️ 检测到 soxr 无输出（可能 ffmpeg bug），已自动改用 swr 重采样${NC}"
+            echo -e "${YELLOW}$MSG_SOXR_NOOUT${NC}"
         fi
     else
         # 退出码非零（139=segfault）→ soxr 唔可用
         USE_SOXR=0
         RESAMPLER="$SWR"
-        echo -e "${YELLOW}⚠️ 检测到 soxr 不可用（Termux ffmpeg bug），已自动改用 swr 重采样${NC}"
-        echo -e "${YELLOW}  音质提示：swr 比 soxr 阻带抑制差约 6dB，但功能完整（510k/封面/tags/削波保护）${NC}"
+        echo -e "${YELLOW}$MSG_SOXR_UNAVAIL${NC}"
+        echo -e "${YELLOW}$MSG_SOXR_HINT${NC}"
     fi
     rm -f "$test_out" 2>/dev/null || true
 }
@@ -87,19 +109,19 @@ NC='\033[0m' # No Color
 # ── 辅助函数 ──
 
 print_usage() {
-    echo "用法: opus-trans [目录路径]"
+    echo "$MSG_USAGE_TITLE"
     echo ""
-    echo "不带参数: 扫描当前目录"
-    echo "带参数:   扫描指定目录"
+    echo "$MSG_USAGE_NOARG"
+    echo "$MSG_USAGE_ARG"
     echo ""
-    echo "选项:"
-    echo "  -h, --help     显示帮助"
-    echo "  -v, --version  显示版本"
+    echo "$MSG_USAGE_OPTS"
+    echo "  -h, --help     $MSG_USAGE_HELP"
+    echo "  -v, --version  $MSG_USAGE_VER"
     echo ""
-    echo "示例:"
-    echo "  opus-trans                    # 扫描当前目录"
-    echo "  opus-trans /sdcard/Music     # 扫描指定目录"
-    echo "  opus-trans ~/storage/music   # 扫描指定目录"
+    echo "$MSG_USAGE_EXAMPLES"
+    echo "  opus-trans                    $MSG_USAGE_EX1"
+    echo "  opus-trans /sdcard/Music     $MSG_USAGE_EX2"
+    echo "  opus-trans ~/storage/music   $MSG_USAGE_EX2"
 }
 
 print_version() {
@@ -124,15 +146,21 @@ install_hint() {
     case "$(detect_platform)" in
         termux)  echo "  pkg install $pkg" ;;
         debian)  echo "  sudo apt install $pkg" ;;
-        *)       echo "  用你嘅包管理器安装 $pkg（apt/dnf/pacman/...）" ;;
+        *)
+            if [[ "$LANG_CODE" == "zh"* || "$LANG_CODE" == "tw"* || "$LANG_CODE" == "TC" ]]; then
+                echo "  用你嘅套件管理器安裝 $pkg（apt/dnf/pacman/...）"
+            else
+                echo "  install $pkg with your package manager (apt/dnf/pacman/...)"
+            fi
+            ;;
     esac
 }
 
 check_ffmpeg() {
     if ! command -v ffmpeg &>/dev/null; then
-        echo -e "${RED}❌ 错误: ffmpeg 未安装${NC}"
+        echo -e "${RED}$MSG_ERR_FFMPEG_MISSING${NC}"
         echo ""
-        echo "请先安装 ffmpeg:"
+        echo "$MSG_ERR_FFMPEG_HINT"
         install_hint "ffmpeg"
         exit 1
     fi
@@ -140,10 +168,10 @@ check_ffmpeg() {
 
 check_opusenc() {
     if ! command -v opusenc &>/dev/null; then
-        echo -e "${RED}❌ 错误: opusenc 未安装${NC}"
+        echo -e "${RED}$MSG_ERR_OPUSENC_MISSING${NC}"
         echo ""
-        echo "v1.2.0 起转码链使用 opusenc（音质升级，支持封面 + 510k）"
-        echo "请先安装 opus-tools:"
+        echo "$MSG_ERR_OPUSENC_HINT1"
+        echo "$MSG_ERR_OPUSENC_HINT2"
         install_hint "opus-tools"
         exit 1
     fi
@@ -153,20 +181,20 @@ check_directory() {
     local dir="$1"
 
     if [[ ! -d "$dir" ]]; then
-        echo -e "${RED}❌ 错误: 目录不存在${NC}"
+        echo -e "${RED}$MSG_ERR_DIR_MISSING${NC}"
         echo ""
         echo "  ${dir}"
         echo ""
-        echo "请检查路径是否正确"
+        echo "$MSG_ERR_DIR_CHECK"
         exit 1
     fi
 
     if [[ ! -r "$dir" ]]; then
-        echo -e "${RED}❌ 错误: 目录无法读取${NC}"
+        echo -e "${RED}$MSG_ERR_DIR_UNREADABLE${NC}"
         echo ""
         echo "  ${dir}"
         echo ""
-        echo "请检查权限设置"
+        echo "$MSG_ERR_DIR_PERM"
         exit 1
     fi
 }
@@ -224,13 +252,13 @@ scan_directory() {
         # 分配组字母
         group_letter=$(number_to_letter "$group_index")
         if [[ -z "$group_letter" ]]; then
-            echo -e "${RED}❌ 错误: 子目录超过 25 个，无法分配字母编号${NC}"
+            echo -e "${RED}$MSG_ERR_TOO_MANY_DIRS${NC}"
             exit 1
         fi
 
         # 目录显示名
         if [[ "$dir" == "$root_dir" ]]; then
-            GROUP_DIRNAMES["$group_letter"]="根目录"
+            GROUP_DIRNAMES["$group_letter"]="$MSG_ROOT_DIR"
         else
             # 显示相对路径
             local relpath="${dir#$root_dir/}"
@@ -270,14 +298,14 @@ file_size_human() {
 
 display_list() {
     if [[ $TOTAL_FILES -eq 0 ]]; then
-        echo -e "${YELLOW}📭 目录里没有找到任何音乐文件${NC}"
+        echo -e "${YELLOW}$MSG_NO_MUSIC${NC}"
         echo ""
-        echo "支持的格式："
+        echo "$MSG_SUPPORTED_FORMATS"
         echo "  flac  wav  ape  wv  mp3  m4a  aac  ogg  wma  aiff"
         exit 0
     fi
 
-    echo -e "${CYAN}🎵 找到 ${TOTAL_FILES} 个音乐文件：${NC}"
+    echo -e "${CYAN}$(printf "$MSG_FOUND_FILES" "$TOTAL_FILES")${NC}"
     echo ""
 
     local prev_group=""
@@ -299,7 +327,7 @@ display_list() {
         local opus_file="${base}.opus"
         local exists_marker=""
         if [[ -f "$opus_file" ]]; then
-            exists_marker=" ${YELLOW}⚠️ 已存在${NC}"
+            exists_marker=" ${YELLOW}$MSG_EXISTS${NC}"
         fi
 
         # 文件大小
@@ -331,7 +359,7 @@ parse_selection() {
     local lower_input
     lower_input=$(echo "$input" | tr '[:upper:]' '[:lower:]')
     if [[ "$lower_input" == "q" ]]; then
-        echo -e "${YELLOW}已取消${NC}"
+        echo -e "${YELLOW}$MSG_CANCELLED${NC}"
         exit 0
     fi
 
@@ -363,7 +391,7 @@ parse_selection() {
 
         # 单独的 q/Q = 取消
         if [[ "$lower_item" == "q" ]]; then
-            echo -e "${YELLOW}已取消${NC}"
+            echo -e "${YELLOW}$MSG_CANCELLED${NC}"
             exit 0
         fi
 
@@ -384,7 +412,7 @@ parse_selection() {
             local n2="${BASH_REMATCH[4]}"
 
             if [[ "$g1" != "$g2" ]]; then
-                echo -e "${RED}❌ 范围选择必须在同一组内: ${item}${NC}" >&2
+                echo -e "${RED}$(printf "$MSG_ERR_RANGE_SAME_GROUP" "$item")${NC}" >&2
                 return 1
             fi
 
@@ -411,7 +439,7 @@ parse_selection() {
                 done
                 # 范围内未找到对应文件时显示警告（不退出，让其他 item 继续解析）
                 if ! $found_in_range; then
-                    echo -e "${YELLOW}⚠️ 跳过 ${g1}${n}（无此文件）${NC}"
+                    echo -e "${YELLOW}$(printf "$MSG_SKIP_NOFILE" "$g1" "$n")${NC}"
                 fi
             done
 
@@ -432,7 +460,7 @@ parse_selection() {
             done
             # 静默跳过 + 警告，不退出（让其他 item 继续解析）
             if ! $found; then
-                echo -e "${YELLOW}⚠️ 跳过 ${item}（无此文件）${NC}"
+                echo -e "${YELLOW}$(printf "$MSG_SKIP_NOFILE2" "$item")${NC}"
             fi
 
         # 单个字母: B (整组)（q 已排除）
@@ -450,14 +478,14 @@ parse_selection() {
             done
             # 静默跳过 + 警告，不退出
             if ! $found; then
-                echo -e "${YELLOW}⚠️ 跳过 ${item}（无此组）${NC}"
+                echo -e "${YELLOW}$(printf "$MSG_SKIP_NOGROUP" "$item")${NC}"
             fi
 
         else
             # q 开头嘅已经被前面 continue 跳过
             # 呢度系真正无法识别嘅格式（语法错误）
-            echo -e "${RED}❌ 无法识别: ${item}${NC}" >&2
-            echo "  格式: A1 / B1-B3 / B / A1,C2 / all" >&2
+            echo -e "${RED}$(printf "$MSG_ERR_UNRECOGNIZED" "$item")${NC}" >&2
+            echo "$MSG_ERR_FORMAT" >&2
             return 1
         fi
     done
@@ -683,7 +711,7 @@ transcode() {
     if [[ $ffmpeg_status -eq 0 && $opusenc_status -eq 0 ]]; then
         encode_ok=1
     else
-        echo -e "       ${YELLOW}⚠️ L1 失败 (${RESAMPLER}+${pipe_fmt})，降级到 L2 (s16le)${NC}"
+        echo -e "${YELLOW}$(printf "$MSG_L1_FALLBACK" "$RESAMPLER" "$pipe_fmt")${NC}"
         rm -f "$output_file" 2>/dev/null || true
         # L2: RESAMPLER + s16le
         ff_args=(-v error -i "$input_file" -af "${vol_filter}${RESAMPLER}" -c:a pcm_s16le -f wav -)
@@ -694,7 +722,7 @@ transcode() {
         if [[ $ffmpeg_status -eq 0 && $opusenc_status -eq 0 ]]; then
             encode_ok=1
         else
-            echo -e "       ${YELLOW}⚠️ L2 失败 (s16le)，降级到 L3 (纯 ffmpeg libopus)${NC}"
+            echo -e "${YELLOW}$MSG_L2_FALLBACK${NC}"
             rm -f "$output_file" 2>/dev/null || true
             # L3: 纯 ffmpeg libopus（最保守，封面丢）
             ffmpeg -v error -i "$input_file" \
@@ -724,7 +752,7 @@ confirm_and_transcode() {
     local failed=0
     local -a failed_files=()
 
-    echo -e "${CYAN}将转码以下 ${total} 个文件：${NC}"
+    echo -e "${CYAN}$(printf "$MSG_WILL_TRANSCODE" "$total")${NC}"
     for idx in "${_indices[@]}"; do
         local grp="${FILE_GROUPS[$idx]}"
         local num="${FILE_NUMBERS[$idx]}"
@@ -744,11 +772,11 @@ confirm_and_transcode() {
         echo -e "  ${BOLDGREEN}${grp}${num}.${NC} ${fname}${exists_marker}"
     done
     echo ""
-    echo -ne "确认？${BOLD}(y 开始，q 取消，大小写均可)${NC}: "
+    echo -ne "$MSG_CONFIRM"
     read -r confirm
 
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-        echo -e "${YELLOW}已取消${NC}"
+        echo -e "${YELLOW}$MSG_CANCELLED${NC}"
         exit 0
     fi
 
@@ -790,17 +818,17 @@ confirm_and_transcode() {
         PEAK_SCANNED_PEAK="$peak"
         PEAK_SCANNED_PAD="$pad"
         if [[ "$pad" == "0" ]]; then
-            echo -e "       峰值 ${peak} dBFS → 无需保护"
+            echo -e "$(printf "$MSG_PEAK_OK" "$peak")"
         else
-            echo -e "       峰值 ${peak} dBFS → 应用 ${pad}dB 保护"
+            echo -e "$(printf "$MSG_PEAK_PAD" "$peak" "$pad")"
         fi
 
         # 第 3 行：转码中（实际执行）
         # v1.2.3: 显示实际使用嘅重采样器（swr or soxr）
         if [[ "$USE_SOXR" == "1" ]]; then
-            echo -e "       转码中 (soxr → opus 510k)..."
+            echo -e "$MSG_TRANSCODING_SOXR"
         else
-            echo -e "       转码中 (swr → opus 510k)..."
+            echo -e "$MSG_TRANSCODING_SWR"
         fi
 
         # 执行转码
@@ -820,40 +848,40 @@ confirm_and_transcode() {
                 local cover_mark=""
                 if command -v opusinfo &>/dev/null; then
                     if opusinfo "$output_file" 2>/dev/null | grep -q "METADATA_BLOCK_PICTURE"; then
-                        cover_mark="  封面 ✓"
+                        cover_mark="$MSG_COVER_OK"
                         ((cover_ok++)) || true
                     else
-                        cover_mark="  封面 ✗"
+                        cover_mark="$MSG_COVER_NO"
                     fi
                 fi
                 # 第 4 行：结果（大小 + 压缩率 + 封面）
-                echo -e "       ${CYAN}$(file_size_human "$in_size")${NC} → ${CYAN}$(file_size_human "$out_size")${NC}  (压缩 ${ratio}%)${cover_mark}"
+                echo -e "       ${CYAN}$(file_size_human "$in_size")${NC} → ${CYAN}$(file_size_human "$out_size")${NC}$(printf "$MSG_COMPRESSED" "$ratio")${cover_mark}"
                 if [[ -z "$name_note" ]]; then
                     ((success++)) || true
                 fi
             else
-                echo -e "       ${RED}❌ 输出验证失败${NC}"
+                echo -e "${RED}$MSG_ERR_OUTPUT_VERIFY${NC}"
                 ((failed++)) || true
                 failed_files+=("$fpath")
             fi
         else
-            echo -e "       ${RED}❌ 转码失败${NC}"
+            echo -e "${RED}$MSG_ERR_TRANSCODE${NC}"
             ((failed++)) || true
             failed_files+=("$fpath")
         fi
     done
 
     echo ""
-    echo "━━━ 完成 ━━━"
-    echo -e "  📊 总计：${total} 个文件"
-    echo -e "  ${GREEN}✅ 成功：${success}${NC}"
-    [[ $already_exists -gt 0 ]] && echo -e "  ${YELLOW}🔁 已存在（自动命名）：${already_exists}${NC}"
-    [[ $failed -gt 0 ]] && echo -e "  ${RED}❌ 失败：${failed}${NC}"
-    [[ $cover_ok -gt 0 ]] && echo -e "  ${CYAN}🖼️ 封面保留：${cover_ok}${NC}"
+    echo "$MSG_DONE"
+    echo -e "$(printf "$MSG_TOTAL" "$total")"
+    echo -e "$(printf "$MSG_SUCCESS" "$success")"
+    [[ $already_exists -gt 0 ]] && echo -e "$(printf "$MSG_EXISTS_RENAMED" "$already_exists")"
+    [[ $failed -gt 0 ]] && echo -e "$(printf "$MSG_FAILED" "$failed")"
+    [[ $cover_ok -gt 0 ]] && echo -e "$(printf "$MSG_COVER_PRESERVED" "$cover_ok")"
     echo ""
 
     if [[ ${#failed_files[@]} -gt 0 ]]; then
-        echo "失败文件："
+        echo "$MSG_FAILED_FILES"
         for f in "${failed_files[@]}"; do
             echo "  - $(basename "$f")"
         done
@@ -863,6 +891,9 @@ confirm_and_transcode() {
 # ── 主函数 ──
 
 main() {
+    # 语言选择（OPUS_TRANS_LANG 预设 or 交互选择）
+    select_language
+
     print_version
     echo ""
 
@@ -898,7 +929,7 @@ main() {
     display_list
 
     # 用户选择
-    echo -ne "请选择${BOLD}(大小写均可: a1 / b1-b3 / b / a1,c2 / all / q)${NC}: "
+    echo -ne "$MSG_PROMPT_SELECT"
     read -r user_selection
 
     # 解析选择
@@ -908,7 +939,7 @@ main() {
     fi
 
     if [[ ${#selected_indices[@]} -eq 0 ]]; then
-        echo -e "${YELLOW}未选择任何文件${NC}"
+        echo -e "${YELLOW}$MSG_NOTHING_SELECTED${NC}"
         exit 0
     fi
 
@@ -920,6 +951,148 @@ main() {
 
     # 确认 + 转码
     confirm_and_transcode selected_indices
+}
+
+# ── 语言定义（占位符替换）──
+# 所有用户可见讯息用 $MSG_* 变量
+# 新增语言：喺下面 case 加一个分支，填晒所有 MSG_* 即可
+init_language() {
+    case "$LANG_CODE" in
+        zh|zh-TW|zh-tw|zh_TW|tw|TC)
+            # ── 繁體中文 ──
+            MSG_USAGE_TITLE="用法: opus-trans [目錄路徑]"
+            MSG_USAGE_NOARG="不帶參數: 掃描當前目錄"
+            MSG_USAGE_ARG="帶參數:   掃描指定目錄"
+            MSG_USAGE_OPTS="選項:"
+            MSG_USAGE_HELP="  顯示幫助"
+            MSG_USAGE_VER="  顯示版本"
+            MSG_USAGE_EXAMPLES="示例:"
+            MSG_USAGE_EX1="  # 掃描當前目錄"
+            MSG_USAGE_EX2="  # 掃描指定目錄"
+
+            MSG_SOXR_NOOUT="⚠️ 偵測到 soxr 無輸出（可能 ffmpeg bug），已自動改用 swr 重採樣"
+            MSG_SOXR_UNAVAIL="⚠️ 偵測到 soxr 不可用（Termux ffmpeg bug），已自動改用 swr 重採樣"
+            MSG_SOXR_HINT="  音質提示：swr 比 soxr 阻帶抑制差約 6dB，但功能完整（510k/封面/tags/削波保護）"
+
+            MSG_ERR_FFMPEG_MISSING="❌ 錯誤: ffmpeg 未安裝"
+            MSG_ERR_FFMPEG_HINT="請先安裝 ffmpeg:"
+            MSG_ERR_OPUSENC_MISSING="❌ 錯誤: opusenc 未安裝"
+            MSG_ERR_OPUSENC_HINT1="v1.2.0 起轉碼鏈使用 opusenc（音質升級，支持封面 + 510k）"
+            MSG_ERR_OPUSENC_HINT2="請先安裝 opus-tools:"
+            MSG_ERR_DIR_MISSING="❌ 錯誤: 目錄不存在"
+            MSG_ERR_DIR_CHECK="請檢查路徑是否正確"
+            MSG_ERR_DIR_UNREADABLE="❌ 錯誤: 目錄無法讀取"
+            MSG_ERR_DIR_PERM="請檢查權限設置"
+
+            MSG_ERR_TOO_MANY_DIRS="❌ 錯誤: 子目錄超過 25 個，無法分配字母編號"
+            MSG_ROOT_DIR="根目錄"
+
+            MSG_NO_MUSIC="📭 目錄裡沒有找到任何音樂文件"
+            MSG_SUPPORTED_FORMATS="支持的格式："
+            MSG_FOUND_FILES="🎵 找到 %s 個音樂文件："
+            MSG_EXISTS="⚠️ 已存在"
+
+            MSG_CANCELLED="已取消"
+            MSG_ERR_RANGE_SAME_GROUP="❌ 範圍選擇必須在同一組內: %s"
+            MSG_SKIP_NOFILE="⚠️ 跳過 %s%s（無此文件）"
+            MSG_SKIP_NOFILE2="⚠️ 跳過 %s（無此文件）"
+            MSG_SKIP_NOGROUP="⚠️ 跳過 %s（無此組）"
+            MSG_ERR_UNRECOGNIZED="❌ 無法識別: %s"
+            MSG_ERR_FORMAT="  格式: A1 / B1-B3 / B / A1,C2 / all"
+
+            MSG_L1_FALLBACK="       ⚠️ L1 失敗 (%s+%s)，降級到 L2 (s16le)"
+            MSG_L2_FALLBACK="       ⚠️ L2 失敗 (s16le)，降級到 L3 (純 ffmpeg libopus)"
+
+            MSG_WILL_TRANSCODE="將轉碼以下 %s 個文件："
+            MSG_CONFIRM="確認？${BOLD}(y 開始，q 取消，大小寫均可)${NC}: "
+            MSG_PEAK_OK="       峰值 %s dBFS → 無需保護"
+            MSG_PEAK_PAD="       峰值 %s dBFS → 應用 %s dB 保護"
+            MSG_TRANSCODING_SOXR="       轉碼中 (soxr → opus 510k)..."
+            MSG_TRANSCODING_SWR="       轉碼中 (swr → opus 510k)..."
+            MSG_COVER_OK="  封面 ✓"
+            MSG_COVER_NO="  封面 ✗"
+            MSG_COMPRESSED="  (壓縮 %s%%)"
+            MSG_ERR_OUTPUT_VERIFY="       ❌ 輸出驗證失敗"
+            MSG_ERR_TRANSCODE="       ❌ 轉碼失敗"
+            MSG_DONE="━━━ 完成 ━━━"
+            MSG_TOTAL="  📊 總計：%s 個文件"
+            MSG_SUCCESS="  ${GREEN}✅ 成功：%s${NC}"
+            MSG_EXISTS_RENAMED="  ${YELLOW}🔁 已存在（自動命名）：%s${NC}"
+            MSG_FAILED="  ${RED}❌ 失敗：%s${NC}"
+            MSG_COVER_PRESERVED="  ${CYAN}🖼️ 封面保留：%s${NC}"
+            MSG_FAILED_FILES="失敗文件："
+
+            MSG_PROMPT_SELECT="請選擇${BOLD}(大小寫均可: a1 / b1-b3 / b / a1,c2 / all / q)${NC}: "
+            MSG_NOTHING_SELECTED="未選擇任何文件"
+            ;;
+        *)
+            # ── English (default) ──
+            MSG_USAGE_TITLE="Usage: opus-trans [directory]"
+            MSG_USAGE_NOARG="No argument: scan current directory"
+            MSG_USAGE_ARG="With argument: scan specified directory"
+            MSG_USAGE_OPTS="Options:"
+            MSG_USAGE_HELP="  Show help"
+            MSG_USAGE_VER="  Show version"
+            MSG_USAGE_EXAMPLES="Examples:"
+            MSG_USAGE_EX1="  # scan current directory"
+            MSG_USAGE_EX2="  # scan specified directory"
+
+            MSG_SOXR_NOOUT="⚠️ soxr produced no output (possible ffmpeg bug), auto-switched to swr resampling"
+            MSG_SOXR_UNAVAIL="⚠️ soxr unavailable (Termux ffmpeg bug), auto-switched to swr resampling"
+            MSG_SOXR_HINT="  Quality note: swr has ~6dB worse stopband than soxr, but everything works (510k/cover/tags/clip protection)"
+
+            MSG_ERR_FFMPEG_MISSING="❌ Error: ffmpeg not installed"
+            MSG_ERR_FFMPEG_HINT="Please install ffmpeg:"
+            MSG_ERR_OPUSENC_MISSING="❌ Error: opusenc not installed"
+            MSG_ERR_OPUSENC_HINT1="Since v1.2.0 the pipeline uses opusenc (better quality, cover art, 510k)"
+            MSG_ERR_OPUSENC_HINT2="Please install opus-tools:"
+            MSG_ERR_DIR_MISSING="❌ Error: directory does not exist"
+            MSG_ERR_DIR_CHECK="Please check the path"
+            MSG_ERR_DIR_UNREADABLE="❌ Error: directory is not readable"
+            MSG_ERR_DIR_PERM="Please check permissions"
+
+            MSG_ERR_TOO_MANY_DIRS="❌ Error: more than 25 subdirectories, cannot assign group letters"
+            MSG_ROOT_DIR="root"
+
+            MSG_NO_MUSIC="📭 No music files found in this directory"
+            MSG_SUPPORTED_FORMATS="Supported formats:"
+            MSG_FOUND_FILES="🎵 Found %s music files:"
+            MSG_EXISTS="⚠️ exists"
+
+            MSG_CANCELLED="Cancelled"
+            MSG_ERR_RANGE_SAME_GROUP="❌ Range selection must be within the same group: %s"
+            MSG_SKIP_NOFILE="⚠️ Skipping %s%s (no such file)"
+            MSG_SKIP_NOFILE2="⚠️ Skipping %s (no such file)"
+            MSG_SKIP_NOGROUP="⚠️ Skipping %s (no such group)"
+            MSG_ERR_UNRECOGNIZED="❌ Unrecognized: %s"
+            MSG_ERR_FORMAT="  Format: A1 / B1-B3 / B / A1,C2 / all"
+
+            MSG_L1_FALLBACK="       ⚠️ L1 failed (%s+%s), falling back to L2 (s16le)"
+            MSG_L2_FALLBACK="       ⚠️ L2 failed (s16le), falling back to L3 (plain ffmpeg libopus)"
+
+            MSG_WILL_TRANSCODE="Will transcode %s file(s):"
+            MSG_CONFIRM="Confirm? ${BOLD}(y start, q cancel, case-insensitive)${NC}: "
+            MSG_PEAK_OK="       peak %s dBFS → no protection needed"
+            MSG_PEAK_PAD="       peak %s dBFS → applying %s dB protection"
+            MSG_TRANSCODING_SOXR="       transcoding (soxr → opus 510k)..."
+            MSG_TRANSCODING_SWR="       transcoding (swr → opus 510k)..."
+            MSG_COVER_OK="  cover ✓"
+            MSG_COVER_NO="  cover ✗"
+            MSG_COMPRESSED="  (%s%% smaller)"
+            MSG_ERR_OUTPUT_VERIFY="       ❌ Output verification failed"
+            MSG_ERR_TRANSCODE="       ❌ Transcode failed"
+            MSG_DONE="━━━ Done ━━━"
+            MSG_TOTAL="  📊 Total: %s file(s)"
+            MSG_SUCCESS="  ${GREEN}✅ Success: %s${NC}"
+            MSG_EXISTS_RENAMED="  ${YELLOW}🔁 Already existed (auto-renamed): %s${NC}"
+            MSG_FAILED="  ${RED}❌ Failed: %s${NC}"
+            MSG_COVER_PRESERVED="  ${CYAN}🖼️ Covers preserved: %s${NC}"
+            MSG_FAILED_FILES="Failed files:"
+
+            MSG_PROMPT_SELECT="Select${BOLD}(case-insensitive: a1 / b1-b3 / b / a1,c2 / all / q)${NC}: "
+            MSG_NOTHING_SELECTED="No files selected"
+            ;;
+    esac
 }
 
 main "$@"
