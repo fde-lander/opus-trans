@@ -1,21 +1,25 @@
 # opus-trans 🐰
 
-Termux Opus 转码器 — 将 Hi-Res FLAC 批量转码为 Opus 320kbps VBR
+Termux Opus 转码器 — 将 Hi-Res FLAC 批量转码为 Opus 510kbps VBR（音质升级版 v1.2.0）
 
-适合将 mora 购买嘅 Hi-Res FLAC（24bit/48-96kHz，每首 80-150MB）转码为便携嘅 Opus 文件（每首约 10MB，听感透明）。
+适合将 mora 购买嘅 Hi-Res FLAC（24bit/48-96kHz，每首 80-150MB）转码为便携嘅 Opus 文件（每首约 17MB，**最大听感**）。
 
 ---
 
 ## 功能
 
 - 🎯 递归扫描子目录（按目录分组 A B C ...，q 留俾取消命令）
-- 🎵 Opus 320kbps VBR — ABX 盲听测试中达到「客观透明」质量
+- 🎵 Opus 510kbps VBR（Opus 立体声硬顶）— 实测 480.9kbps，vs v1.1.0 实际只有 262-298kbps
+- 🎚️ 自适应削波保护 — 源峰值 > -1.5dBFS 自动衰减到 -1.5dBFS（贴顶母带削波归零）
+- 🪄 soxr 重采样（precision=28）— 96kHz 降采样阻带抑制优 6.4dB
+- 🖼️ 封面保留 — opusenc --picture 嵌入专辑封面（ffmpeg Ogg muxer 无 native cover）
+- 🏷️ metadata 完整搬运 — 22 个 tags 保留 + ReplayGain 自动转 R128（RFC 7845）
 - 📁 已存在 `.opus` 时自动命名 `song (2).opus`，绝不覆盖
-- 🛡️ 原文件只读，不修改不删除（FFmpeg 输入输出完全独立）
+- 🛡️ 原文件只读，不修改不删除
 - 🔤 选择语法灵活：A1 / B1-B3 / B / A1,C2 / all
 - ⌨️ 支持小写输入：`a1` 同 `A1` 一致
-- 📊 智能文件大小显示（B/KB/MB/GB）
-- 🐰 零额外依赖：纯 Bash + ffmpeg
+- 📊 智能文件大小显示（B/KB/MB/GB）+ 压缩率 + 封面标记
+- 📈 进度显示：每首固定 4 行，零刷新（Termux 稳定）
 
 ---
 
@@ -23,6 +27,9 @@ Termux Opus 转码器 — 将 Hi-Res FLAC 批量转码为 Opus 320kbps VBR
 
 - **Termux**（F-Droid 版本，Play Store 版本已过时）
 - **ffmpeg**：`pkg install ffmpeg`
+- **opus-tools**（v1.2.0 新增依赖，提供 opusenc）：`pkg install opus-tools`
+
+> ⚠️ v1.2.0 起转码链使用 opusenc（音质升级 + 封面 + 510k），未安装会报错并提示安装命令
 
 ---
 
@@ -181,14 +188,26 @@ Termux 默认 PATH 系 `~/.local/bin` **唔喺度**，必须手动加。
 ### Q: 为什么用 Opus 唔用 MP3？
 A: Opus 喺任何 bitrate 都完胜 MP3。MP3 320kbps 仍可被 ABX 测试分辨，Opus 320kbps 已经达到「客观透明」。参考：r/audiophile、Hydrogenaudio 共识。
 
-### Q: 为什么用 320kbps，唔用 192k 或 256k？
-A: Hydrogenaudio 测试认为 Opus 192k 已透明。但 320k 保留大量余量，约 10MB/首仍然合理。Opus 嘅「ABX 透明位」喺 ~160kbps，但系有咗 24/96 FLAC，320k 听起来更稳阵。
+### Q: 为什么用 510kbps，唔用 320k？
+A: v1.2.0 实测发现 v1.1.0 设定 320k 实际只有 262-298kbps（libopus VBR 自动下调）。510k 系 Opus 立体声硬顶，实测 480.9kbps，为主人金耳朵提供最大听感余量。文件体积约 17MB/首（v1.1.0 约 10MB）。
 
 ### Q: 原文件会被删吗？
 A: 不会。FFmpeg 只读取输入文件，写入新文件。原 FLAC 完全唔郁。
 
 ### Q: 几时应该备份 FLAC？
 A: Opus 系 lossy 转码，理论上唔可以逆向恢复。建议保留原始 FLAC 备份（例如云盘），Opus 只做便携副本。
+
+### Q: v1.2.0 点解要用 opusenc？纯 ffmpeg 唔得咩？
+A: 三个原因：
+1. ffmpeg Ogg muxer 无 native cover art 支持（trac #4448 自 2014 未修），封面会丢
+2. opusenc 可以做 --picture 嵌封面
+3. opusenc 重采样质量不如 soxr，所以先 ffmpeg 预处理（soxr 重采样 + 自适应削波）再管道畀 opusenc 编码
+
+### Q: 贴顶母带会唔会削波？
+A: v1.2.0 内置自适应削波保护：源峰值 > -1.5dBFS 会自动衰减到 -1.5dBFS。贴顶母带（0dBFS）会轻微降低音量（约 1.5dB，多数人唔察觉），但消除全部削波失真。非贴顶源（峰值 ≤ -1.5dBFS）完全唔郁，音量 0dB 变化。
+
+### Q: ReplayGain 标签会唔会保留？
+A: 会，并且自动转成 R128 规范格式（RFC 7845）：REPLAYGAIN_TRACK_GAIN → R128_TRACK_GAIN。例如 -6.50 dB → R128_TRACK_GAIN=18560。
 
 ### Q: 唔记得 ~/.local/bin 嘅脚本喺边度？
 A:
