@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # ── 常量 ──
-readonly VERSION="1.0.4"
+readonly VERSION="1.1.0"
 readonly BITRATE="320k"
 readonly SUPPORTED_EXT="flac wav ape wv mp3 m4a aac ogg wma aiff"
 # 注意：.opus 也在扫描范围内（可从 opus 转其他格式，但实际场景极少）
@@ -30,6 +30,8 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
+MAGENTA='\033[1;35m'   # 目录用 — 紫色粗体
+BRIGHTBLUE='\033[1;34m' # 编号用 — 蓝色粗体
 NC='\033[0m' # No Color
 
 # ── 辅助函数 ──
@@ -207,7 +209,7 @@ display_list() {
 
         # 组标题
         if [[ "$grp" != "$prev_group" ]]; then
-            echo -e "${BOLD}${grp} ${GROUP_DIRNAMES[$grp]} (${GROUP_FILECOUNT[$grp]})${NC}"
+            echo -e "  ${MAGENTA}${grp} ${GROUP_DIRNAMES[$grp]} (${GROUP_FILECOUNT[$grp]})${NC}"
             prev_group="$grp"
         fi
 
@@ -223,7 +225,7 @@ display_list() {
         local size
         size=$(stat -c%s "$fpath" 2>/dev/null || stat -f%z "$fpath" 2>/dev/null || echo 0)
 
-        echo -e "  ${grp}${num}. ${fname}  ${CYAN}$(file_size_human "$size")${NC}${exists_marker}"
+        echo -e "  ${BRIGHTBLUE}${grp}${num}.${NC} ${fname}  ${CYAN}$(file_size_human "$size")${NC}${exists_marker}"
     done
 
     echo ""
@@ -434,7 +436,7 @@ confirm_and_transcode() {
             exists_marker=" ${YELLOW}→ ${new_name}${NC}"
         fi
 
-        echo "  ${grp}${num}. ${fname}${exists_marker}"
+        echo -e "  ${BRIGHTBLUE}${grp}${num}.${NC} ${fname}${exists_marker}"
     done
     echo ""
     echo -ne "确认？${BOLD}(y 开始，q 取消，大小写均可)${NC}: "
