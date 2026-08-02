@@ -658,6 +658,7 @@ build_metadata_args() {
 transcode() {
     local input_file="$1"
     local output_file="$2"
+    local ACTUAL_DEPTH=""   # v1.4.0: 实际成功嘅位深（L1=$src_depth / L2=16 / L3=N/A / 失败=空）
 
     # ── 1. 抽封面（若有）──
     local cover_path
@@ -710,6 +711,7 @@ transcode() {
     opusenc_status=${pipe_status[1]}
     if [[ $ffmpeg_status -eq 0 && $opusenc_status -eq 0 ]]; then
         encode_ok=1
+        ACTUAL_DEPTH="$src_depth"   # v1.4.0: L1 完整音质，记录实际位深
     else
         echo -e "${YELLOW}$(printf "$MSG_L1_FALLBACK" "$RESAMPLER" "$pipe_fmt")${NC}"
         rm -f "$output_file" 2>/dev/null || true
@@ -721,6 +723,7 @@ transcode() {
         opusenc_status=${pipe_status[1]}
         if [[ $ffmpeg_status -eq 0 && $opusenc_status -eq 0 ]]; then
             encode_ok=1
+            ACTUAL_DEPTH="16"   # v1.4.0: L2 强制 16bit
         else
             echo -e "${YELLOW}$MSG_L2_FALLBACK${NC}"
             rm -f "$output_file" 2>/dev/null || true
@@ -731,6 +734,7 @@ transcode() {
                 "$output_file" 2>/dev/null
             if [[ $? -eq 0 && -s "$output_file" ]]; then
                 encode_ok=1
+                ACTUAL_DEPTH="N/A"   # v1.4.0: L3 libopus，位深唔适用
             fi
         fi
     fi
@@ -823,13 +827,9 @@ confirm_and_transcode() {
             echo -e "$(printf "$MSG_PEAK_PAD" "$peak" "$pad")"
         fi
 
-        # 第 3 行：转码中（实际执行）
-        # v1.2.3: 显示实际使用嘅重采样器（swr or soxr）
-        if [[ "$USE_SOXR" == "1" ]]; then
-            echo -e "$MSG_TRANSCODING_SOXR"
-        else
-            echo -e "$MSG_TRANSCODING_SWR"
-        fi
+        # 第 3 行：转码中（占位符，实际 pipeline 信息喺第 4 行结果行显示）
+        # v1.4.0: 避免提前打印 swr/soxr（降级时可能唔准）；用最美观嘅动画符号
+        echo -e "$MSG_TRANSCODING"
 
         # 执行转码
         local in_size out_size
@@ -854,8 +854,24 @@ confirm_and_transcode() {
                         cover_mark="$MSG_COVER_NO"
                     fi
                 fi
-                # 第 4 行：结果（大小 + 压缩率 + 封面）
-                echo -e "       ${CYAN}$(file_size_human "$in_size")${NC} → ${CYAN}$(file_size_human "$out_size")${NC}$(printf "$MSG_COMPRESSED" "$ratio")${cover_mark}"
+                # 第 4 行：结果（实际 pipeline + 大小 + 压缩率 + 封面）
+                # v1.4.0: 显示 actual_resampler + actual bit depth + ⚠️ 降级警告
+                local actual_resampler
+                if [[ "$USE_SOXR" == "1" ]]; then
+                    actual_resampler="soxr"
+                else
+                    actual_resampler="swr"
+                fi
+                local depth_warn=""
+                local depth_str="$ACTUAL_DEPTH"
+                if [[ "$ACTUAL_DEPTH" == "16" && "$src_depth" != "16" ]]; then
+                    depth_warn=" ⚠️"
+                fi
+                [[ "$ACTUAL_DEPTH" == "N/A" ]] && depth_str="libopus"
+                local in_human out_human
+                in_human=$(file_size_human "$in_size")
+                out_human=$(file_size_human "$out_size")
+                echo -e "       ${CYAN}${actual_resampler} · ${depth_str}bit${depth_warn}${NC} → ${CYAN}opus 510k${NC}  ${in_human} → ${out_human}$(printf "$MSG_COMPRESSED" "$ratio")${cover_mark}"
                 if [[ -z "$name_note" ]]; then
                     ((success++)) || true
                 fi
@@ -1007,8 +1023,7 @@ init_language() {
             MSG_CONFIRM="確認？${BOLD}(y 開始，q 取消，大小寫均可)${NC}: "
             MSG_PEAK_OK="       峰值 %s dBFS → 無需保護"
             MSG_PEAK_PAD="       峰值 %s dBFS → 應用 %s dB 保護"
-            MSG_TRANSCODING_SOXR="       轉碼中 (soxr → opus 510k)..."
-            MSG_TRANSCODING_SWR="       轉碼中 (swr → opus 510k)..."
+            MSG_TRANSCODING="       🎼 開始轉碼，請稍候..."
             MSG_COVER_OK="  封面 ✓"
             MSG_COVER_NO="  封面 ✗"
             MSG_COMPRESSED="  (壓縮 %s%%)"
@@ -1074,8 +1089,7 @@ init_language() {
             MSG_CONFIRM="Confirm? ${BOLD}(y start, q cancel, case-insensitive)${NC}: "
             MSG_PEAK_OK="       peak %s dBFS → no protection needed"
             MSG_PEAK_PAD="       peak %s dBFS → applying %s dB protection"
-            MSG_TRANSCODING_SOXR="       transcoding (soxr → opus 510k)..."
-            MSG_TRANSCODING_SWR="       transcoding (swr → opus 510k)..."
+            MSG_TRANSCODING="       🎼 transcoding, please wait..."
             MSG_COVER_OK="  cover ✓"
             MSG_COVER_NO="  cover ✗"
             MSG_COMPRESSED="  (%s%% smaller)"
